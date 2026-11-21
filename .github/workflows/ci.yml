@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.12-alpine
+        env:
+          POSTGRES_USER: vwkanban
+          POSTGRES_PASSWORD: vwkanban
+          POSTGRES_DB: vwkanban
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vwkanban" --health-interval 2s --health-retries 30
+    env:
+      DATABASE_URL: postgresql+asyncpg://vwkanban:vwkanban@127.0.0.1:5432/vwkanban
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          version: "0.13.9"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run alembic upgrade head
+      - run: uv run pytest
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22.23.5"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      # Temporary (M0 vim spike); replaced by the real e2e suite in M5.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run spike:e2e
+
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Configure .env with a non-localhost hostname
+        run: |
+          cp .env.example .env
+          sed -i 's|^PUBLIC_URL=.*|PUBLIC_URL=http://vwk.test|' .env
+          echo "127.0.0.1 vwk.test" | sudo tee -a /etc/hosts
+      - run: docker compose up -d --build --wait --wait-timeout 180
+      - run: curl -fsS http://vwk.test/api/healthz | tee /dev/stderr | grep -q '"status":"ok"'
+      - run: curl -fsS http://vwk.test/ | grep -q '<div id="app">'
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [backend, frontend, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build and push images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          owner=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ "$REF_TYPE" = tag ]; then extra="$REF_NAME"; else extra=latest; fi
+          build() {
+            img="ghcr.io/$owner/vwkanban-$1"
+            docker build -f "$2" -t "$img:$GITHUB_SHA" -t "$img:$extra" "$3"
+            docker push "$img:$GITHUB_SHA"
+            docker push "$img:$extra"
+          }
+          build app docker/app.Dockerfile backend
+          build web docker/web.Dockerfile .
