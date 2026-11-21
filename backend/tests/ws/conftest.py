@@ -134,16 +134,22 @@ class WsClient:
             self.arrived.notify_all()
 
     async def expect(
-        self, t: str | tuple[str, ...], pred: Callable[[dict], bool] = lambda m: True
+        self,
+        t: str | tuple[str, ...],
+        pred: Callable[[dict], bool] = lambda m: True,
+        *,
+        consume: bool = True,
     ) -> dict:
         """The first unconsumed message of type `t` (or one of the types) matching `pred`,
-        waiting up to WAIT_S for it."""
+        waiting up to WAIT_S for it. `consume=False` waits for any such message, consumed
+        or not, and leaves it unconsumed."""
         types = (t,) if isinstance(t, str) else t
 
         def find():
             for i, m in enumerate(self.messages):
-                if i not in self.taken and m.get("t") in types and pred(m):
-                    self.taken.add(i)
+                if (not consume or i not in self.taken) and m.get("t") in types and pred(m):
+                    if consume:
+                        self.taken.add(i)
                     return m
             return None
 
