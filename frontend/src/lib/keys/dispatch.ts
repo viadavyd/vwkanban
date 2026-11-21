@@ -96,6 +96,30 @@ export function onKeydown(e: KeyboardEvent): void {
   layer.handler(action);
 }
 
+/** A key typed while a field was loading, to dispatch again. */
+export interface KeyPress {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}
+
+/** Dispatches keys again, as if typed now: the keys a loading field queued but didn't
+ * use because a replayed Esc left it (they belong to the levels below). */
+export function redispatch(keys: readonly KeyPress[]): void {
+  for (const k of keys) {
+    const e = {
+      ...k,
+      metaKey: false,
+      altKey: false,
+      isComposing: false,
+      target: null,
+      preventDefault() {},
+      stopPropagation() {},
+    };
+    onKeydown(e as unknown as KeyboardEvent);
+  }
+}
+
 /** Installs the listener; returns the uninstall function. */
 export function installKeys(): () => void {
   window.addEventListener("keydown", onKeydown, { capture: true });

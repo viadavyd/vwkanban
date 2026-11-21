@@ -6,6 +6,7 @@ import {
   card,
   expectSelected,
   expectTitles,
+  newCard,
   settled,
   STATE,
 } from "./helpers";
@@ -16,15 +17,6 @@ import {
 
 const presence = (page: Page) => page.getByTestId("presence").getByRole("listitem");
 const message = (page: Page) => page.locator("main .message");
-
-async function newCard(page: Page, title: string) {
-  await page.keyboard.press("a");
-  await expect(page.getByLabel("New card title")).toBeFocused();
-  await page.keyboard.type(title);
-  await page.keyboard.press("Enter");
-  await expect(page.getByLabel("New card title")).toHaveCount(0);
-  await expectSelected(page, title);
-}
 
 /** The admin creates a board from the dashboard, opens it and shares it with BOB through
  * the members overlay (M, a). Returns the board's id. */

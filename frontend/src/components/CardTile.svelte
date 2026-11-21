@@ -13,6 +13,7 @@
     children,
     onselect,
     ontoggle,
+    onopen,
   }: {
     card: Card;
     selected: boolean;
@@ -21,6 +22,7 @@
     children?: ChildCount;
     onselect: (id: string) => void;
     ontoggle: (id: string) => void;
+    onopen?: (id: string) => void;
   } = $props();
 
   const meta = $derived(
@@ -34,7 +36,7 @@
   );
 </script>
 
-<!-- Mouse is optional (plan §4.4): click selects, the checkbox toggles. -->
+<!-- Mouse is optional (plan §4.4): click selects, double-click opens, the checkbox toggles. -->
 <!-- svelte-ignore a11y_click_events_have_key_events (keys are handled by the dispatcher) -->
 <div
   class="tile"
@@ -48,6 +50,7 @@
   data-card={card.id}
   data-number={card.number}
   onclick={() => onselect(card.id)}
+  ondblclick={() => onopen?.(card.id)}
 >
   <div class="body">
     <div class="title">{card.title}</div>

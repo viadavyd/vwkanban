@@ -1,7 +1,6 @@
 <script lang="ts">
   // A board column per board.png: header boxed in the status colour (name + count), then
-  // the cards. `draftAt` is where the new-card placeholder (`newCard`) sits (a/A), if any.
-  import type { Snippet } from "svelte";
+  // the cards.
   import type { Card, Status } from "../lib/api/boards";
   import { colorOf } from "../lib/colors";
   import type { ChildCount } from "../lib/sync/ops";
@@ -15,10 +14,9 @@
     markedId = null,
     children,
     pending,
-    draftAt = null,
-    newCard,
     onselect,
     ontoggle,
+    onopen,
   }: {
     status: Status;
     cards: Card[];
@@ -29,10 +27,10 @@
     markedId?: string | null;
     children: Map<string, ChildCount>;
     pending: Set<string>;
-    draftAt?: number | null;
-    newCard?: Snippet;
     onselect: (id: string) => void;
     ontoggle: (id: string) => void;
+    /** double-click: open the card */
+    onopen: (id: string) => void;
   } = $props();
 </script>
 
@@ -48,8 +46,7 @@
     <span class="count" data-testid="column-count">{cards.length}</span>
   </header>
   <div class="cards" role="listbox" aria-label={`${status.name} cards`}>
-    {#each cards as card, i (card.id)}
-      {#if draftAt === i}{@render newCard?.()}{/if}
+    {#each cards as card (card.id)}
       <CardTile
         {card}
         selected={card.id === selectedId}
@@ -58,9 +55,9 @@
         children={children.get(card.id)}
         {onselect}
         {ontoggle}
+        {onopen}
       />
     {/each}
-    {#if draftAt !== null && draftAt >= cards.length}{@render newCard?.()}{/if}
   </div>
 </section>
 

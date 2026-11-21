@@ -1,19 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
-import { card, column, expectSelected, expectTitles, settled, STATE } from "./helpers";
+import {
+  card,
+  cardView,
+  column,
+  expectSelected,
+  expectTitles,
+  mode,
+  newCard,
+  settled,
+  STATE,
+} from "./helpers";
 
 // Keyboard only (no clicks, no fill()): every M3a board key on a fresh board.
 test.use({ storageState: STATE });
 
 const boardTitle = `M3a e2e ${Date.now()}`;
 
-async function newCard(page: Page, key: "a" | "A", title: string) {
-  await page.keyboard.press(key);
-  await expect(page.getByLabel("New card title")).toBeFocused();
-  await page.keyboard.type(title);
-  await page.keyboard.press("Enter");
-  await expect(page.getByLabel("New card title")).toHaveCount(0);
-  await expectSelected(page, title);
-}
+const add = (page: Page, key: "a" | "A", title: string) => newCard(page, title, key);
 
 test("keyboard-only board: a A j k h l Space d ? Esc", async ({ page }) => {
   await page.goto("/");
@@ -33,24 +36,30 @@ test("keyboard-only board: a A j k h l Space d ? Esc", async ({ page }) => {
   await expect(page.getByTestId("board-title")).toContainText(boardTitle);
   await expect(page.getByTestId("column")).toHaveCount(3);
 
-  // The placeholder: Esc, Ctrl+C and an empty Enter each discard it, one level only.
-  for (const key of ["Escape", "Control+c", "Enter"]) {
+  // A new card with no title is dropped: one level per key, INSERT → NORMAL → CARD →
+  // BOARD (Esc or Ctrl+C), or Enter (save and leave the empty title) then Esc.
+  for (const keys of [
+    ["Escape", "Escape", "Escape"],
+    ["Control+c", "Control+c", "Control+c"],
+    ["Enter", "Escape"],
+  ]) {
     await page.keyboard.press("a");
-    await expect(page.getByLabel("New card title")).toBeFocused();
-    await page.keyboard.press(key);
-    await expect(page.getByLabel("New card title")).toHaveCount(0);
-    await expect(page.getByTestId("mode")).toHaveText("-- BOARD --");
+    await expect(cardView(page)).toBeVisible();
+    await expect(mode(page)).toHaveText("-- INSERT --");
+    for (const key of keys) await page.keyboard.press(key);
+    await expect(cardView(page)).toHaveCount(0);
+    await expect(mode(page)).toHaveText("-- BOARD --");
   }
   await expect(page.locator("[data-card]")).toHaveCount(0);
 
   // a = below the selection, A = above it.
-  await newCard(page, "a", "one");
-  await newCard(page, "a", "three");
+  await add(page, "a", "one");
+  await add(page, "a", "three");
   await page.keyboard.press("k");
   await expectSelected(page, "one");
-  await newCard(page, "a", "two");
+  await add(page, "a", "two");
   await page.keyboard.press("k");
-  await newCard(page, "A", "first");
+  await add(page, "A", "first");
   await expectTitles(page, "Todo", ["first", "one", "two", "three"]);
   await expect(column(page, "Todo").getByTestId("column-count")).toHaveText("4");
 

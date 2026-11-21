@@ -35,3 +35,19 @@ export async function settled(page: Page) {
   await expect(sync).toHaveAttribute("data-state", "live");
   await expect(sync).toHaveAttribute("data-pending", "0");
 }
+
+export const mode = (page: Page) => page.getByTestId("mode");
+export const cardView = (page: Page) => page.getByTestId("card-view");
+
+/** `a` (or `A`) on the board: card mode opens with the title in INSERT; type it, `Enter`
+ * saves it (the card is created) and leaves the field, `Esc` closes the card. */
+export async function newCard(page: Page, title: string, key: "a" | "A" = "a") {
+  await page.keyboard.press(key);
+  await expect(cardView(page)).toBeVisible();
+  await page.keyboard.type(title);
+  await page.keyboard.press("Enter");
+  await expect(mode(page)).toHaveText("-- CARD --");
+  await page.keyboard.press("Escape");
+  await expect(cardView(page)).toHaveCount(0);
+  await expectSelected(page, title);
+}

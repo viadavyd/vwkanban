@@ -9,16 +9,18 @@
 <script lang="ts">
   // Board view per .local/drawing/board.png and plan §4.4: columns of card tiles,
   // keyboard-first (keys in keymap.ts, board mode and its `s` prefix, column mode).
+  import CardView, { type NewCard } from "../components/CardView.svelte";
   import Column from "../components/Column.svelte";
   import Confirm from "../components/Confirm.svelte";
   import HelpOverlay from "../components/HelpOverlay.svelte";
   import MembersOverlay from "../components/MembersOverlay.svelte";
-  import NewCardTile from "../components/NewCardTile.svelte";
   import Prompt from "../components/Prompt.svelte";
   import TopBar from "../components/TopBar.svelte";
   import type { User } from "../lib/api/auth";
   import { getBoard, type BoardDetail, type Status } from "../lib/api/boards";
   import { ApiError } from "../lib/api/client";
+  import { loadEditor } from "../lib/editor/load";
+  import { uuid7 } from "../lib/ids";
   import { COLOR_NAMES, nextColor } from "../lib/colors";
   import {
     clampRow,
@@ -31,7 +33,6 @@
   import { pushMode } from "../lib/keys/dispatch";
   import type { Action } from "../lib/keys/keymap";
   import {
-    createCard,
     createStatus,
     deleteCard,
     deleteStatus,
@@ -43,7 +44,7 @@
     type BoardView,
     type Op,
   } from "../lib/sync/ops";
-  import { pasteOp, snapshot } from "../lib/sync/register";
+  import { pasteOp, snapshot, type Snapshot } from "../lib/sync/register";
   import {
     BoardSocket,
     boardSocketUrl,
@@ -73,7 +74,7 @@
     | { kind: "columnDelete"; status: Status };
 
   let title = $state("…");
-  let store: BoardStore | null = null;
+  let store = $state.raw<BoardStore | null>(null);
   let socket: BoardSocket | null = null;
   let syncStatus = $state<SyncStatus>("connecting");
   let unsaved = $state(0);
@@ -84,9 +85,11 @@
   let overlay = $state<Overlay | null>(null);
   // `s` was pressed: the next key is a column command (column mode).
   let prefix = $state(false);
-  // The a/A placeholder: its column, its row, and the neighbour it goes next to.
-  let draft = $state<{ col: number; at: number; after?: string; before?: string } | null>(null);
-  const TITLE_MAX = 300;
+  // The card open in card mode (i, or a/A for a new one), and who deleted it meanwhile.
+  let opened = $state<{ id: string; newCard: NewCard | null; row: number } | null>(null);
+  let openDeletedBy = $state<string | null>(null);
+  // The top bar's mode: BOARD, CARD, or vim's NORMAL / INSERT / VISUAL in a field.
+  let modeLabel = $state("board");
   let message = $state("");
 
   // Selection: a column and a card in it (by id, so it survives inserts above it).
@@ -154,6 +157,7 @@
    * say so when they moved the selected card (plan §3.5, §9). */
   function remoteChange(ev: BoardEvent) {
     const who = ev.actor.username;
+    if (opened && ev.data.deleted_ids?.includes(opened.id)) openDeletedBy = who;
     if (marked && ev.data.deleted_ids?.includes(marked.id)) {
       message = `#${markedNumber} was deleted by ${who}`;
       register = null;
@@ -202,27 +206,44 @@
     if (i >= 0) selCol = i;
   }
 
-  function openDraft(above: boolean) {
-    if (!current) return;
-    if (!selectedId) draft = { col: selCol, at: 0 };
-    else if (above) draft = { col: selCol, at: selRow, before: selectedId };
-    else draft = { col: selCol, at: selRow + 1, after: selectedId };
+  /** Card mode on the selected card (`i`, double-click). The editor chunk starts loading
+   * now: the first card open is what fetches it (plan §7). */
+  function openCard(cardId: string | null = selectedId) {
+    if (!cardId || !store) return;
+    void loadEditor();
+    openDeletedBy = null;
+    opened = { id: cardId, newCard: null, row: selRow };
   }
 
-  function submitDraft(title: string) {
-    if (!draft || !store) return;
-    const { col, at, after, before } = draft;
-    draft = null;
-    const op = createCard(store.seq, {
-      status_id: statuses[col].id,
-      title,
-      ...(after && { after_id: after }),
-      ...(before && { before_id: before }),
-    });
-    store.submit(op);
-    selCol = col;
-    selId = op.data.id;
-    want = at;
+  /** `a` / `A`: a new card below / above the selection, opened in card mode with its
+   * title in INSERT. It is created when the title is first saved (plan §4.2). */
+  function openNew(above: boolean) {
+    if (!current || !store) return;
+    void loadEditor();
+    const newCard: NewCard = { status_id: current.id };
+    let row = 0;
+    if (selectedId && above) [newCard.before_id, row] = [selectedId, selRow];
+    else if (selectedId) [newCard.after_id, row] = [selectedId, selRow + 1];
+    openDeletedBy = null;
+    opened = { id: uuid7(), newCard, row };
+  }
+
+  function created(cardId: string) {
+    if (!opened) return;
+    want = opened.row;
+    if (!selectCard(cardId)) selId = cardId;
+  }
+
+  function closeCard() {
+    const id = opened?.id;
+    opened = null;
+    modeLabel = "board";
+    if (id) selectCard(id);
+  }
+
+  function keep(snap: Snapshot, why: string) {
+    register = { kind: "copy", snapshot: snap };
+    message = why;
   }
 
   function toggle(cardId: string) {
@@ -349,10 +370,12 @@
       case "up":
       case "right":
         return move(action);
+      case "open":
+        return openCard();
       case "create":
-        return openDraft(false);
+        return openNew(false);
       case "createAbove":
-        return openDraft(true);
+        return openNew(true);
       case "toggleDone":
         if (selectedId) toggle(selectedId);
         return;
@@ -424,7 +447,7 @@
 </script>
 
 <TopBar
-  mode="board"
+  mode={modeLabel}
   {pending}
   {title}
   username={user.username}
@@ -447,26 +470,38 @@
           markedId={marked?.id ?? null}
           children={view.children}
           pending={view.pending}
-          draftAt={draft?.col === i ? draft.at : null}
           onselect={selectCard}
           ontoggle={(cardId) => {
             selectCard(cardId);
             toggle(cardId);
           }}
-        >
-          {#snippet newCard()}
-            <NewCardTile
-              maxlength={TITLE_MAX}
-              onsubmit={submitDraft}
-              oncancel={() => (draft = null)}
-            />
-          {/snippet}
-        </Column>
+          onopen={(cardId) => {
+            if (opened || overlay) return;
+            selectCard(cardId);
+            openCard(cardId);
+          }}
+        />
       {/each}
     </div>
   {/if}
   <p class="message" role="status">{message}</p>
 </main>
+
+{#if opened && store && view}
+  {#key opened.id}
+    <CardView
+      {store}
+      {view}
+      cardId={opened.id}
+      newCard={opened.newCard}
+      deletedBy={openDeletedBy}
+      onclose={closeCard}
+      oncreated={created}
+      onregister={keep}
+      onmode={(m) => (modeLabel = m)}
+    />
+  {/key}
+{/if}
 
 {#if overlay?.kind === "help"}
   <HelpOverlay mode="board" onclose={() => (overlay = null)} />

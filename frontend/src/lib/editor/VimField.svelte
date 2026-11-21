@@ -4,7 +4,8 @@
   // leave only from plain vim NORMAL; INSERT, VISUAL, a pending operator and the `:`
   // prompt keep them for vim. Keys typed while the chunk loads are replayed in order.
   import { onDestroy, onMount } from "svelte";
-  import { pushMode } from "../keys/dispatch";
+  import { tick } from "svelte";
+  import { pushMode, redispatch } from "../keys/dispatch";
   import { keyName, lookup, type ExCommand } from "../keys/keymap";
   import { shouldLeaveField } from "./bridge";
   import { loadEditor } from "./load";
@@ -48,6 +49,7 @@
   function leave() {
     if (left || !editor) return;
     left = true;
+    popMode(); // at once: keys after this one belong to the card
     onleave(editor.text());
   }
 
@@ -58,8 +60,16 @@
 
   /** Keys typed while loading, through the same rules as live ones. */
   function replay(ed: Editor) {
-    for (const k of queued) {
-      if (left) break;
+    const keys = queued;
+    queued = [];
+    for (const [i, k] of keys.entries()) {
+      if (left) {
+        // A replayed Esc left the field: the rest go to the levels below, once the card
+        // has caught up.
+        const rest = keys.slice(i);
+        void tick().then(() => redispatch(rest));
+        return;
+      }
       if (isBack(k)) {
         if (shouldLeaveField(ed.snapshot())) leave();
         else ed.feed({ key: "Escape", ctrlKey: false, shiftKey: false });
@@ -67,7 +77,6 @@
       }
       ed.feed(k);
     }
-    queued = [];
   }
 
   const popMode = pushMode("field", () => leave(), {
