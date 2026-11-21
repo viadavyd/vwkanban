@@ -13,6 +13,8 @@ export type Action =
   | "right"
   | "open"
   | "create"
+  | "createAbove"
+  | "toggleDone"
   | "rename"
   | "delete"
   | "logout"
@@ -51,7 +53,15 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "dashboard", keys: ["Q"], action: "logout", help: "log out" },
   { mode: "dashboard", keys: ["?"], action: "help", help: "show this help" },
 
-  // Board (M2 stub; the full board keymap arrives in M3a)
+  // Board (M3a; y p x u i, column keys and H L arrive in M3b and M5)
+  { mode: "board", keys: ["h"], action: "left", help: "previous column" },
+  { mode: "board", keys: ["j"], action: "down", help: "next card in the column" },
+  { mode: "board", keys: ["k"], action: "up", help: "previous card in the column" },
+  { mode: "board", keys: ["l"], action: "right", help: "next column" },
+  { mode: "board", keys: ["a"], action: "create", help: "new card below the selection" },
+  { mode: "board", keys: ["A"], action: "createAbove", help: "new card above the selection" },
+  { mode: "board", keys: ["d"], action: "delete", help: "delete the card (with its children)" },
+  { mode: "board", keys: ["Space"], action: "toggleDone", help: "toggle done" },
   { mode: "board", keys: ["Esc", "C-c"], action: "back", help: "back to the dashboard" },
   { mode: "board", keys: ["?"], action: "help", help: "show this help" },
 

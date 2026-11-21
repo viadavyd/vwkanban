@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from tests.api.helpers import add_board, add_card, add_member, add_user
 from tests.conftest import PUBLIC_URL
+from vwkanban.ids import uuid7
 
 PW = "s3cret-pass"
 
@@ -26,13 +27,27 @@ async def as_alice(make_client, alice):
 
 # --- access matrix -----------------------------------------------------------------
 
+
 # Every /boards/{board_id}* route, with who may call it. The guard test below fails if a
 # route is added without a row here.
+def _create_op(status_ids):
+    return {
+        "client_id": str(uuid7()),
+        "op": {
+            "op_id": str(uuid7()),
+            "kind": "card.create",
+            "base_seq": 0,
+            "data": {"id": str(uuid7()), "status_id": str(status_ids[0]), "title": "x"},
+        },
+    }
+
+
 BOARD_ROUTES = [
-    # method, path, json body, minimum role
+    # method, path, json body (or a function of the board's status ids), minimum role
     ("GET", "/api/boards/{board_id}", None, "editor"),
     ("PATCH", "/api/boards/{board_id}", {"title": "Renamed"}, "owner"),
     ("DELETE", "/api/boards/{board_id}", None, "owner"),
+    ("POST", "/api/boards/{board_id}/ops", _create_op, "editor"),
 ]
 
 
@@ -51,7 +66,9 @@ def test_access_matrix_covers_every_board_route(client):
 @pytest.mark.parametrize(("method", "path", "body", "min_role"), BOARD_ROUTES)
 @pytest.mark.parametrize("who", ["stranger", "editor", "owner", "anonymous"])
 async def test_access_matrix(make_client, engine, alice, method, path, body, min_role, who):
-    board, _ = await add_board(engine, alice, "A's board")
+    board, status_ids = await add_board(engine, alice, "A's board")
+    if callable(body):
+        body = body(status_ids)
     bob = await add_user(engine, "bob", PW)
     if who == "editor":
         await add_member(engine, board, bob, "editor")
@@ -79,8 +96,10 @@ async def test_access_matrix(make_client, engine, alice, method, path, body, min
         title = (
             await conn.execute(text("SELECT title FROM boards WHERE id = :b"), {"b": board})
         ).scalar()
+        cards = (await conn.execute(text("SELECT count(*) FROM cards"))).scalar_one()
     if expected is not None:
         assert title == "A's board"  # nothing changed
+        assert cards == 0
 
 
 async def test_stranger_does_not_see_board_in_list(make_client, engine, alice):
@@ -223,3 +242,24 @@ async def test_board_writes_need_origin(make_client, engine, alice, method):
     async with make_client(origin=PUBLIC_URL) as c:
         await login_as(c, "alice")
         assert len((await c.get("/api/boards")).json()) == 1
+
+
+async def test_board_load_returns_live_cards(as_alice, engine, alice):
+    board, (todo, doing, _) = await add_board(engine, alice, "B")
+    other, (other_todo, *_) = await add_board(engine, alice, "Other")
+    c2 = await add_card(engine, board, alice, number=2, status_id=todo)
+    c1 = await add_card(engine, board, alice, number=1, status_id=todo)
+    c3 = await add_card(engine, board, alice, number=3, status_id=doing, is_done=True)
+    child = await add_card(engine, board, alice, number=4, parent_id=c3)
+    await add_card(engine, board, alice, number=5, status_id=todo, deleted=True)
+    await add_card(engine, other, alice, number=1, status_id=other_todo)
+
+    cards = (await as_alice.get(f"/api/boards/{board}")).json()["cards"]
+    by_id = {c["id"]: c for c in cards}
+    assert set(by_id) == {str(c1), str(c2), str(c3), str(child)}
+    todo_ids = [c["id"] for c in cards if c["status_id"] == str(todo)]
+    assert todo_ids == [str(c1), str(c2)]  # by position (nth_key(number))
+    assert by_id[str(child)]["parent_card_id"] == str(c3)
+    assert by_id[str(child)]["status_id"] is None
+    assert by_id[str(c3)]["is_done"] is True
+    assert set(by_id[str(c1)]) >= {"number", "position", "title", "tags", "date", "field_meta"}
