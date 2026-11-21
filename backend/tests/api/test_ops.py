@@ -201,7 +201,35 @@ async def test_create_validation(setup, data):
     [
         {"kind": "card.nope", "data": {}},
         {"kind": "card.update", "data": {"id": "x", "fields": {"is_done": True}}},
-        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"title": "t"}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"title": " "}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"title": None}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"tags": ["a;b"]}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"tags": ["a", "a"]}}},
+        {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"date": "2026-02-30"}}},
+        {
+            "kind": "card.update",
+            "data": {"id": str(uuid7()), "fields": {"description": "x" * 20_001}},
+        },
+        {"kind": "card.create", "data": {"id": str(uuid7()), "title": "no place"}},
+        {
+            "kind": "card.create",
+            "data": {
+                "id": str(uuid7()),
+                "title": "both",
+                "status_id": str(uuid7()),
+                "parent_id": str(uuid7()),
+            },
+        },
+        {
+            "kind": "card.create",
+            "data": {
+                "id": str(uuid7()),
+                "title": "child with children",
+                "parent_id": str(uuid7()),
+                "children": [{"id": str(uuid7()), "title": "x"}],
+            },
+        },
         {"kind": "card.delete", "data": {"id": str(uuid7())}, "bogus": True},
         {"kind": "card.restore", "data": {"id": str(uuid7())}},  # restore is undo-only
         {"kind": "card.move", "data": {"id": str(uuid7()), "parent_id": str(uuid7())}},

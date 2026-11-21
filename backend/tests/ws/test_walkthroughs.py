@@ -11,16 +11,6 @@ from tests.ws.test_ws import new_card
 from vwkanban.ids import uuid7
 
 
-@pytest.fixture
-async def ab(ws):
-    alice = await ws.user("alice")
-    bob = await ws.user("bob")
-    board, statuses = await ws.board(alice, bob)
-    a = await ws.connect(alice, board)
-    b = await ws.connect(bob, board)
-    return ws, alice, bob, board, statuses, a, b
-
-
 async def ok(c, kind, data, **kw) -> dict:
     """Sends an op and returns its event (asserts it was acked)."""
     op_id = await c.op(kind, data, **kw)

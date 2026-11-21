@@ -272,3 +272,162 @@ async def test_undo_of_create_deletes(setup):
     )
     assert r.status_code == 200
     assert await loaded(c, board) == {}
+
+
+# --- text fields (M5) ----------------------------------------------------------------------
+
+
+async def update(c, board, card, base_seq=None, **fields):
+    """card.update from a fresh client; by default its base is the board's current seq
+    (as if the field had just been opened)."""
+    if base_seq is None:
+        base_seq = (await c.get(f"/api/boards/{board}")).json()["seq"]
+    return await send(
+        c, board, "card.update", {"id": card["id"], "fields": fields}, base_seq=base_seq
+    )
+
+
+async def test_text_fields_are_written_and_stamped(setup):
+    c, board, (todo, *_), _ = setup
+    card = await create(c, board, todo, "old")
+    r = await update(
+        c,
+        board,
+        card,
+        title="  new  ",
+        description='line 1\nline 2, "quoted"',
+        tags=["ui", "bug"],
+        date="2026-11-30",
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()["event"]["data"]["card"]
+    assert out["title"] == "new"  # stripped
+    assert out["description"] == 'line 1\nline 2, "quoted"'
+    assert out["tags"] == ["ui", "bug"] and out["date"] == "2026-11-30"
+    for f in ("title", "description", "tags", "date"):
+        assert out["field_meta"][f]["seq"] == r.json()["seq"]
+    assert out["field_meta"]["is_done"]["seq"] < r.json()["seq"]  # untouched
+
+    # date: null clears the due date; a field not sent is left alone.
+    out = (await update(c, board, card, date=None)).json()["event"]["data"]["card"]
+    assert out["date"] is None and out["tags"] == ["ui", "bug"]
+    assert (await loaded(c, board))[card["id"]]["description"] == 'line 1\nline 2, "quoted"'
+
+
+async def test_text_conflict_against_base_seq(setup):
+    """Plan §3.2: `conflict` if field_meta[f].seq > base_seq and another client wrote it;
+    the reject carries the card's current state and consumes no seq."""
+    c, board, (todo, *_), _ = setup
+    me, other = uuid7(), uuid7()
+    card = await create(c, board, todo, client_id=me)
+    base = (await c.get(f"/api/boards/{board}")).json()["seq"]
+    data = {"id": card["id"], "fields": {"description": "theirs"}}
+    seq = (await send(c, board, "card.update", data, client_id=other, base_seq=base)).json()["seq"]
+
+    mine = {"id": card["id"], "fields": {"description": "mine"}}
+    r = await send(c, board, "card.update", mine, client_id=me, base_seq=base)
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["code"] == "conflict"
+    assert err["message"] == f"#{card['number']}'s description was changed by alice"
+    assert err["current"]["description"] == "theirs"
+    assert (await c.get(f"/api/boards/{board}")).json()["seq"] == seq  # no seq consumed
+
+    # A different field, or is_done (LWW), is fine with the same stale base.
+    other_field = {"id": card["id"], "fields": {"title": "t", "is_done": True}}
+    r = await send(c, board, "card.update", other_field, client_id=me, base_seq=base)
+    assert r.status_code == 200, r.text
+    # `:w!`: the same write with the current seq as base wins.
+    r = await send(c, board, "card.update", mine, client_id=me, base_seq=seq)
+    assert r.status_code == 200, r.text
+    assert r.json()["event"]["data"]["card"]["description"] == "mine"
+
+
+async def test_text_update_of_a_deleted_card_is_gone(setup):
+    c, board, (todo, *_), _ = setup
+    card = await create(c, board, todo, "5")
+    await send(c, board, "card.delete", {"id": card["id"]})
+    r = await update(c, board, card, description="draft")
+    assert r.status_code == 410
+    assert r.json()["error"]["message"] == f"#{card['number']} was deleted by alice"
+
+
+async def test_undo_of_a_text_update(setup):
+    c, board, (todo, *_), _ = setup
+    me, other = uuid7(), uuid7()
+    card = await create(c, board, todo, "a", client_id=me)
+    body = {"id": card["id"], "fields": {"title": "b"}}
+    seq = (await send(c, board, "card.update", body, client_id=me)).json()["seq"]
+    back = {"id": card["id"], "fields": {"title": "a"}}
+    r = await send(c, board, "card.update", back, client_id=me, undo=True, base_seq=seq)
+    assert r.status_code == 200, r.text
+
+    seq = (
+        await send(c, board, "card.update", body, client_id=me, base_seq=r.json()["seq"])
+    ).json()["seq"]
+    await send(
+        c,
+        board,
+        "card.update",
+        {"id": card["id"], "fields": {"title": "c"}},
+        client_id=other,
+        base_seq=seq,
+    )
+    r = await send(c, board, "card.update", back, client_id=me, undo=True, base_seq=seq)
+    assert r.status_code == 409
+    assert r.json()["error"]["message"] == "can't undo: changed by alice"
+
+
+# --- children (M5: o / O in card mode) -----------------------------------------------------
+
+
+async def child(c, board, parent, title="child", **kw):
+    data = {"id": uuid7(), "parent_id": parent["id"], "title": title}
+    for k in ("after_id", "before_id"):
+        if k in kw:
+            data[k] = kw.pop(k)
+    return await send(c, board, "card.create", data, **kw)
+
+
+async def test_child_create_next_to_siblings(setup):
+    c, board, (todo, *_), _ = setup
+    parent = await create(c, board, todo, "p")
+    r = await child(c, board, parent, "one")
+    assert r.status_code == 200, r.text
+    one = r.json()["event"]["data"]["card"]
+    assert one["parent_card_id"] == parent["id"] and one["status_id"] is None
+    assert one["number"] == parent["number"] + 1
+    three = (await child(c, board, parent, "three", after_id=one["id"])).json()["event"]["data"]
+    two = (await child(c, board, parent, "two", before_id=three["card"]["id"])).json()["event"]
+    zero = (await child(c, board, parent, "zero", before_id=one["id"])).json()["event"]
+    assert two["data"]["card"] and zero["data"]["card"]
+    kids = [x for x in (await loaded(c, board)).values() if x["parent_card_id"] == parent["id"]]
+    titles = [x["title"] for x in sorted(kids, key=lambda x: x["position"].encode())]
+    assert titles == ["zero", "one", "two", "three"]
+    # The column still holds only the parent.
+    assert await column_titles(c, board, todo) == ["p"]
+
+    # Toggle and delete work on a child; restoring it needs a live parent.
+    kid = one
+    r = await send(c, board, "card.update", {"id": kid["id"], "fields": {"is_done": True}})
+    assert r.status_code == 200, r.text
+    seq = (await send(c, board, "card.delete", {"id": kid["id"]})).json()["seq"]
+    r = await send(c, board, "card.restore", {"id": kid["id"]}, undo=True, base_seq=seq)
+    assert r.status_code == 200, r.text
+
+
+async def test_child_rules(setup):
+    c, board, (todo, *_), _ = setup
+    parent = await create(c, board, todo, "p")
+    kid = (await child(c, board, parent)).json()["event"]["data"]["card"]
+
+    r = await child(c, board, kid, "grandchild")
+    assert r.status_code == 422 and r.json()["error"]["code"] == "validation"
+
+    r = await child(c, board, {"id": str(uuid7())})
+    assert r.status_code == 404
+
+    await send(c, board, "card.delete", {"id": parent["id"]})
+    r = await child(c, board, parent, "late")
+    assert r.status_code == 410
+    assert r.json()["error"]["message"] == f"#{parent['number']} was deleted by alice"

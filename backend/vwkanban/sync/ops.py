@@ -4,7 +4,8 @@
 2. op_id already logged → return the stored ack (idempotent resend)
 3. access + liveness checks, scoped to the board
 4. UPDATE boards SET seq=seq+1, next_number=... RETURNING (row lock, allocation)
-5. undo check (`undo: true`) against field_meta; mutate; every written field gets
+5. conflict checks against field_meta: text fields of card.update against `base_seq`,
+   and every touched field of an undo; mutate; every written field gets
    field_meta[f] = {seq, client}
 6. append to board_events, commit, broadcast the event to the board's sockets (sender
    included: its client drops the pending op by op_id), ack
@@ -29,6 +30,7 @@ from vwkanban.sync.fracindex import key_between
 from vwkanban.sync.hub import Hub
 from vwkanban.sync.models import BoardEvent
 from vwkanban.sync.schemas import (
+    TEXT_FIELDS,
     Ack,
     CardCreate,
     CardDelete,
@@ -156,17 +158,21 @@ class _Ctx:
         stamp = {"seq": seq, "client": str(self.client_id)}
         row.field_meta = {**row.field_meta, **dict.fromkeys(fields, stamp)}
 
-    async def undo_check(self, meta: dict, fields: list[str], current: Any) -> None:
-        """An undo must not revert a teammate's newer write (plan §3.2): reject if any field
-        it touches was written by another client after the undone op (`base_seq`). The
-        decision reads only field_meta; the event log only names who, for the message."""
-        if not self.op.undo:
-            return
+    def stale(self, meta: dict, fields: list[str]) -> tuple[str, dict] | None:
+        """The first of `fields` another client wrote after the op's `base_seq`, with its
+        stamp. Reads only field_meta, never the event log (so trimming can't fail open)."""
         for f in fields:
             s = meta.get(f)
             if s and s["seq"] > self.op.base_seq and s["client"] != str(self.client_id):
-                who = await self.who(s)
-                raise Reject("conflict", f"can't undo: changed by {who}", current)
+                return f, s
+        return None
+
+    async def undo_check(self, meta: dict, fields: list[str], current: Any) -> None:
+        """An undo must not revert a teammate's newer write (plan §3.2): reject if any field
+        it touches was written by another client after the undone op (`base_seq`). The
+        event log only names who, for the message."""
+        if self.op.undo and (hit := self.stale(meta, fields)):
+            raise Reject("conflict", f"can't undo: changed by {await self.who(hit[1])}", current)
 
     async def who(self, stamp: dict | None) -> str:
         """Who wrote a field_meta stamp, for messages ("another user" once its event has
@@ -277,13 +283,14 @@ async def _status_live(ctx: _Ctx, status_id: uuid.UUID) -> bool:
 async def _create(ctx: _Ctx, op: CardCreate):
     d = op.data
     db = ctx.db
+    if d.parent_id is not None:
+        return await _create_child(ctx, op)
     if not await _status_live(ctx, d.status_id):
         raise Reject("gone", "that column no longer exists")
     ids = [d.id, *(ch.id for ch in d.children)]
     if len(set(ids)) != len(ids) or await db.scalar(select(Card.id).where(Card.id.in_(ids))):
         raise Reject("validation", "card id already exists")
     seq, number = await ctx.next_seq(numbers=len(ids))
-    fields = ["title", "description", "tags", "date", "is_done", "position"]
 
     def new(data, **place) -> Card:
         card = Card(
@@ -298,7 +305,7 @@ async def _create(ctx: _Ctx, op: CardCreate):
             created_by=ctx.member.user.id,
             **place,
         )
-        ctx.stamp(card, fields, seq)
+        ctx.stamp(card, _CREATED_FIELDS, seq)
         return card
 
     scope = _column(ctx.board_id, d.status_id)
@@ -320,9 +327,54 @@ async def _create(ctx: _Ctx, op: CardCreate):
     return data
 
 
+async def _create_child(ctx: _Ctx, op: CardCreate):
+    """`o`/`O` in card mode: a child next to its siblings. The parent must be live and
+    top-level (depth 1)."""
+    d = op.data
+    db = ctx.db
+    parent = await _card(ctx, d.parent_id)
+    if parent.parent_card_id is not None:
+        raise Reject("validation", "a child card can't have children")
+    if await db.scalar(select(Card.id).where(Card.id == d.id)) is not None:
+        raise Reject("validation", "card id already exists")
+    seq, number = await ctx.next_seq(numbers=1)
+    card = Card(
+        id=d.id,
+        board_id=ctx.board_id,
+        number=number,
+        parent_card_id=parent.id,
+        position=await _key_in(db, Card, _siblings(parent.id), d.after_id, d.before_id),
+        title=d.title,
+        description=d.description,
+        is_done=d.is_done,
+        tags=d.tags,
+        date=d.date,
+        field_meta={},
+        created_by=ctx.member.user.id,
+    )
+    ctx.stamp(card, _CREATED_FIELDS, seq)
+    db.add(card)
+    await db.flush()
+    await db.refresh(card)
+    return {"_seq": seq, "card": card_out(card)}
+
+
+_CREATED_FIELDS = ["title", "description", "tags", "date", "is_done", "position"]
+
+_FIELD_NAMES = {"title": "title", "description": "description", "tags": "tags", "date": "due date"}
+
+
 async def _update(ctx: _Ctx, op: CardUpdate):
+    """Text fields: optimistic concurrency against the frozen `base_seq` (plan §3.2); a
+    stale write is refused with the card's current state, so the client keeps its draft.
+    is_done: last write wins (except as an undo)."""
     card = await _card(ctx, op.data.id)
     fields = op.data.fields.model_dump(exclude_unset=True)
+    text = [f for f in TEXT_FIELDS if f in fields]
+    if not ctx.op.undo and (hit := ctx.stale(card.field_meta, text)):
+        who = await ctx.who(hit[1])
+        what = _FIELD_NAMES[hit[0]]
+        raise Reject("conflict", f"#{card.number}'s {what} was changed by {who}", card_out(card))
     await ctx.undo_check(card.field_meta, list(fields), card_out(card))
     seq, _ = await ctx.next_seq()
     for name, value in fields.items():  # is_done: last write wins
