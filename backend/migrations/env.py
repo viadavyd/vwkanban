@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import vwkanban.auth.models  # noqa: F401  (registers tables)
 from vwkanban.config import get_settings
 from vwkanban.db import Base
 
