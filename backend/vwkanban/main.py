@@ -13,6 +13,7 @@ from vwkanban.auth.sessions import purge_expired
 from vwkanban.boards.members import router as members_router
 from vwkanban.boards.routes import router as boards_router
 from vwkanban.config import Settings, get_settings
+from vwkanban.csvio.routes import router as csv_router
 from vwkanban.db import make_engine, make_sessionmaker
 from vwkanban.errors import install_error_handlers
 from vwkanban.sync.hub import Hub
@@ -45,6 +46,7 @@ def build_api_router() -> APIRouter:
     api.include_router(boards_router)
     api.include_router(members_router)
     api.include_router(sync_router)
+    api.include_router(csv_router)
     return api
 
 

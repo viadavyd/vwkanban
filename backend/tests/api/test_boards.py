@@ -51,6 +51,7 @@ BOARD_ROUTES = [
     ("GET", "/api/boards/{board_id}/members", None, "editor"),
     ("POST", "/api/boards/{board_id}/members", {"username": "carol"}, "owner"),
     ("DELETE", "/api/boards/{board_id}/members/{user_id}", None, "owner"),
+    ("GET", "/api/boards/{board_id}/export.csv", None, "editor"),
 ]
 
 
