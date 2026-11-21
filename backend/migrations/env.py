@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import vwkanban.auth.models  # noqa: F401  (registers tables)
 import vwkanban.boards.models  # noqa: F401
+import vwkanban.sync.models  # noqa: F401
 from vwkanban.config import get_settings
 from vwkanban.db import Base
 

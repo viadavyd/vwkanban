@@ -14,6 +14,8 @@ from vwkanban.boards.routes import router as boards_router
 from vwkanban.config import Settings, get_settings
 from vwkanban.db import make_engine, make_sessionmaker
 from vwkanban.errors import install_error_handlers
+from vwkanban.sync.models import trim_events
+from vwkanban.sync.routes import router as sync_router
 
 HEALTH_DB_TIMEOUT_S = 2.0
 
@@ -38,6 +40,7 @@ def build_api_router() -> APIRouter:
     api.include_router(health)
     api.include_router(auth_router)
     api.include_router(boards_router)
+    api.include_router(sync_router)
     return api
 
 
@@ -48,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with app.state.sessionmaker() as db:
             await purge_expired(db)
+            await trim_events(db)
         await ensure_admin(app.state.sessionmaker, settings)
         yield
         await app.state.engine.dispose()

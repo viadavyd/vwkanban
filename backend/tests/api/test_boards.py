@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from tests.api.helpers import add_board, add_card, add_member, add_user
 from tests.conftest import PUBLIC_URL
+from vwkanban.ids import uuid7
 
 PW = "s3cret-pass"
 
@@ -26,13 +27,27 @@ async def as_alice(make_client, alice):
 
 # --- access matrix -----------------------------------------------------------------
 
+
 # Every /boards/{board_id}* route, with who may call it. The guard test below fails if a
 # route is added without a row here.
+def _create_op(status_ids):
+    return {
+        "client_id": str(uuid7()),
+        "op": {
+            "op_id": str(uuid7()),
+            "kind": "card.create",
+            "base_seq": 0,
+            "data": {"id": str(uuid7()), "status_id": str(status_ids[0]), "title": "x"},
+        },
+    }
+
+
 BOARD_ROUTES = [
-    # method, path, json body, minimum role
+    # method, path, json body (or a function of the board's status ids), minimum role
     ("GET", "/api/boards/{board_id}", None, "editor"),
     ("PATCH", "/api/boards/{board_id}", {"title": "Renamed"}, "owner"),
     ("DELETE", "/api/boards/{board_id}", None, "owner"),
+    ("POST", "/api/boards/{board_id}/ops", _create_op, "editor"),
 ]
 
 
@@ -51,7 +66,9 @@ def test_access_matrix_covers_every_board_route(client):
 @pytest.mark.parametrize(("method", "path", "body", "min_role"), BOARD_ROUTES)
 @pytest.mark.parametrize("who", ["stranger", "editor", "owner", "anonymous"])
 async def test_access_matrix(make_client, engine, alice, method, path, body, min_role, who):
-    board, _ = await add_board(engine, alice, "A's board")
+    board, status_ids = await add_board(engine, alice, "A's board")
+    if callable(body):
+        body = body(status_ids)
     bob = await add_user(engine, "bob", PW)
     if who == "editor":
         await add_member(engine, board, bob, "editor")
@@ -79,8 +96,10 @@ async def test_access_matrix(make_client, engine, alice, method, path, body, min
         title = (
             await conn.execute(text("SELECT title FROM boards WHERE id = :b"), {"b": board})
         ).scalar()
+        cards = (await conn.execute(text("SELECT count(*) FROM cards"))).scalar_one()
     if expected is not None:
         assert title == "A's board"  # nothing changed
+        assert cards == 0
 
 
 async def test_stranger_does_not_see_board_in_list(make_client, engine, alice):

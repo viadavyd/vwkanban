@@ -18,19 +18,25 @@ _CODES = {
 
 
 class ApiError(HTTPException):
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    """`extra` adds fields to the error object, e.g. an op reject's `current`."""
+
+    def __init__(self, status_code: int, code: str, message: str, extra: dict | None = None):
         super().__init__(status_code=status_code, detail=message)
         self.code = code
+        self.extra = extra or {}
 
 
-def error_body(code: str, message: str) -> dict:
-    return {"error": {"code": code, "message": message}}
+def error_body(code: str, message: str, extra: dict | None = None) -> dict:
+    return {"error": {"code": code, "message": message, **(extra or {})}}
 
 
 async def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
     code = getattr(exc, "code", None) or _CODES.get(exc.status_code, "error")
     message = exc.detail if isinstance(exc.detail, str) else code
-    return JSONResponse(error_body(code, message), status_code=exc.status_code, headers=exc.headers)
+    extra = getattr(exc, "extra", None)
+    return JSONResponse(
+        error_body(code, message, extra), status_code=exc.status_code, headers=exc.headers
+    )
 
 
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
