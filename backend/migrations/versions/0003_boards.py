@@ -62,7 +62,7 @@ def upgrade() -> None:
         sa.Column("board_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("color", sa.Text(), nullable=False),
-        sa.Column("position", sa.Text(), nullable=False),
+        sa.Column("position", sa.Text(collation="C"), nullable=False),
         sa.CheckConstraint(
             "color IN ('red', 'yellow', 'blue', 'green', 'purple', 'orange', 'pink', 'gray')",
             name="statuses_color",
@@ -82,7 +82,7 @@ def upgrade() -> None:
         sa.Column("number", sa.Integer(), nullable=False),
         sa.Column("parent_card_id", sa.Uuid(), nullable=True),
         sa.Column("status_id", sa.Uuid(), nullable=True),
-        sa.Column("position", sa.Text(), nullable=False),
+        sa.Column("position", sa.Text(collation="C"), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), server_default="", nullable=False),
         sa.Column("is_done", sa.Boolean(), server_default="false", nullable=False),

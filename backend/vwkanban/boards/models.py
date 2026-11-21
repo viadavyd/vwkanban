@@ -32,6 +32,9 @@ BOARD_TITLE_MAX = 120
 STATUS_NAME_MAX = 40
 CARD_TITLE_MAX = 300
 CARD_DESCRIPTION_MAX = 20_000
+# Fractional-index keys compare byte-wise ("A" < "Z" < "a"); a locale collation would
+# reorder them, so positions always use the "C" collation.
+POSITION = Text(collation="C")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -88,7 +91,7 @@ class Status(Base):
     board_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("boards.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(Text)
     color: Mapped[str] = mapped_column(Text)
-    position: Mapped[str] = mapped_column(Text)  # fractional key
+    position: Mapped[str] = mapped_column(POSITION)
 
 
 class Card(Base):
@@ -129,7 +132,7 @@ class Card(Base):
     status_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("statuses.id", ondelete="RESTRICT")
     )
-    position: Mapped[str] = mapped_column(Text)
+    position: Mapped[str] = mapped_column(POSITION)
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, server_default="")
     is_done: Mapped[bool] = mapped_column(Boolean, server_default="false")
