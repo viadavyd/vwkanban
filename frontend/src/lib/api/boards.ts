@@ -19,7 +19,9 @@ export interface Status {
   id: string;
   name: string;
   color: string;
+  /** Fractional key, computed by the server only; "" while unconfirmed. */
   position: string;
+  field_meta?: Record<string, FieldStamp>;
 }
 
 export interface FieldStamp {

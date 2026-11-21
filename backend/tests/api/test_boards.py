@@ -263,3 +263,56 @@ async def test_board_load_returns_live_cards(as_alice, engine, alice):
     assert by_id[str(child)]["status_id"] is None
     assert by_id[str(c3)]["is_done"] is True
     assert set(by_id[str(c1)]) >= {"number", "position", "title", "tags", "date", "field_meta"}
+
+
+# Every op kind, as a stranger: 404 (the board's existence isn't revealed), nothing written.
+def _op_data(kind: str, status_ids, card_id) -> dict:
+    s = str(status_ids[0])
+    return {
+        "card.create": {"id": str(uuid7()), "status_id": s, "title": "x"},
+        "card.update": {"id": card_id, "fields": {"is_done": True}},
+        "card.delete": {"id": card_id},
+        "card.move": {"id": card_id, "status_id": str(status_ids[1])},
+        "card.restore": {"id": card_id},
+        "status.create": {"id": str(uuid7()), "name": "New", "color": "red"},
+        "status.update": {"id": s, "name": "Renamed"},
+        "status.move": {"id": s, "after_id": str(status_ids[1])},
+        "status.delete": {"id": str(status_ids[2])},
+    }[kind]
+
+
+def _op_kinds() -> list[str]:
+    from typing import get_args
+
+    from vwkanban.sync.schemas import Op
+
+    union = get_args(Op)[0]
+    return [get_args(m.model_fields["kind"].annotation)[0] for m in get_args(union)]
+
+
+def test_op_kind_list_is_complete():
+    assert len(_op_kinds()) == 9
+
+
+@pytest.mark.parametrize("kind", _op_kinds())
+async def test_every_op_kind_is_404_for_a_stranger(make_client, engine, alice, kind):
+    board, status_ids = await add_board(engine, alice, "A's board")
+    card = await add_card(engine, board, alice, number=1, status_id=status_ids[0])
+    await add_user(engine, "bob", PW)
+    body = {
+        "client_id": str(uuid7()),
+        "op": {
+            "op_id": str(uuid7()),
+            "kind": kind,
+            "base_seq": 0,
+            "undo": kind == "card.restore",
+            "data": _op_data(kind, status_ids, str(card)),
+        },
+    }
+    async with make_client() as c:
+        await login_as(c, "bob")
+        r = await c.post(f"/api/boards/{board}/ops", json=body)
+    assert r.status_code == 404, r.text
+    async with engine.connect() as conn:
+        seq = (await conn.execute(text("SELECT seq FROM boards"))).scalar_one()
+    assert seq == 0

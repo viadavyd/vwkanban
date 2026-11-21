@@ -4,10 +4,17 @@ import {
   buildView,
   confirmedFrom,
   createCard,
+  createStatus,
   deleteCard,
+  deleteStatus,
   inverseOf,
+  moveCard,
+  moveStatus,
+  restoreCard,
   setDone,
+  updateStatus,
   type BoardEvent,
+  type Op,
 } from "../src/lib/sync/ops";
 import { uuid7 } from "../src/lib/ids";
 import { card, DOING, TODO } from "./fixtures";
@@ -65,16 +72,20 @@ describe("view", () => {
   });
 });
 
-describe("events", () => {
-  const ev = (seq: number, data: BoardEvent["data"]): BoardEvent => ({
-    seq,
-    op_id: "o",
-    client_id: "c",
-    actor: { id: "u", username: "u" },
-    kind: "card.create",
-    data,
-  });
+const ev = (
+  seq: number,
+  data: BoardEvent["data"],
+  kind: Op["kind"] = "card.create",
+): BoardEvent => ({
+  seq,
+  op_id: "o",
+  client_id: "c",
+  actor: { id: "u", username: "u" },
+  kind,
+  data,
+});
 
+describe("events", () => {
   it("applies creates, updates and deletes (with children)", () => {
     const s = state();
     applyEvent(s, ev(6, { card: card("c4", "a3") }));
@@ -86,26 +97,157 @@ describe("events", () => {
     expect(v.columns.get(TODO.id)![0].is_done).toBe(true);
     expect(v.children.size).toBe(0);
   });
+
+  it("applies restores with children, pastes, and column events in position order", () => {
+    const s = state();
+    applyEvent(s, ev(6, { id: "c1", deleted_ids: ["c1", "k1", "k2"] }));
+    applyEvent(
+      s,
+      ev(7, {
+        card: card("c1", "a0"),
+        children: [card("k1", "a0", { status_id: null, parent_card_id: "c1" })],
+      }),
+    );
+    expect(buildView(s, []).children.get("c1")).toEqual({ done: 0, total: 1 });
+    applyEvent(
+      s,
+      ev(
+        8,
+        { status: { id: "s-r", name: "Review", color: "red", position: "a0V" } },
+        "status.create",
+      ),
+    );
+    applyEvent(s, ev(9, { status: { ...TODO, position: "a2" } }, "status.move"));
+    expect(s.statuses.map((x) => x.id)).toEqual(["s-r", DOING.id, TODO.id]);
+    applyEvent(s, ev(10, { id: "s-r", purged_ids: ["gone1"] }, "status.delete"));
+    expect(s.statuses.map((x) => x.id)).toEqual([DOING.id, TODO.id]);
+    expect(s.seq).toBe(10);
+  });
+
+  it("keeps confirmed columns in position order from the load", () => {
+    const s = confirmedFrom(1, [{ ...TODO, position: "a5" }, DOING], []);
+    expect(s.statuses.map((x) => x.id)).toEqual([DOING.id, TODO.id]);
+  });
 });
 
 describe("inverses", () => {
-  it("create → delete, update → old value; delete waits for card.restore (M3b)", () => {
-    const create = createCard(5, { status_id: TODO.id, title: "x" }, "n1");
-    expect(inverseOf(create, undefined, 6)).toMatchObject({
-      kind: "card.delete",
-      data: { id: "n1" },
-      base_seq: 6,
-    });
-    const before = card("c1", "a0", { is_done: false });
-    expect(inverseOf(setDone(5, "c1", true), before, 6)).toMatchObject({
-      kind: "card.update",
-      data: { id: "c1", fields: { is_done: false } },
-    });
-    expect(inverseOf(deleteCard(5, "c1"), before, 6)).toBeNull();
+  const v = () => buildView(state(), []);
+
+  it("gives every op kind an inverse marked undo, from the view before the op", () => {
+    const cases: [Op, Partial<Op>][] = [
+      [
+        createCard(5, { status_id: TODO.id, title: "x" }, "n1"),
+        { kind: "card.delete", data: { id: "n1" } },
+      ],
+      [
+        setDone(5, "c1", true),
+        { kind: "card.update", data: { id: "c1", fields: { is_done: false } } },
+      ],
+      [deleteCard(5, "c2"), { kind: "card.restore", data: { id: "c2" } }],
+      [restoreCard(5, "c2"), { kind: "card.delete", data: { id: "c2" } }],
+      [
+        moveCard(5, "c2", DOING.id),
+        {
+          kind: "card.move",
+          data: { id: "c2", status_id: TODO.id, after_id: "c1", before_id: "c3" },
+        },
+      ],
+      [
+        moveCard(5, "c1", DOING.id),
+        { kind: "card.move", data: { id: "c1", status_id: TODO.id, before_id: "c2" } },
+      ],
+      [
+        createStatus(5, "New", "red", {}, "s-new"),
+        { kind: "status.delete", data: { id: "s-new" } },
+      ],
+      [
+        updateStatus(5, TODO.id, { name: "Backlog" }),
+        { kind: "status.update", data: { id: TODO.id, name: "Todo" } },
+      ],
+      [
+        moveStatus(5, TODO.id, { after_id: DOING.id }),
+        { kind: "status.move", data: { id: TODO.id, before_id: DOING.id } },
+      ],
+      [
+        deleteStatus(5, DOING.id),
+        {
+          kind: "status.create",
+          data: { id: DOING.id, name: "Doing", color: "blue", after_id: TODO.id },
+        },
+      ],
+    ];
+    for (const [op, want] of cases) {
+      const inv = inverseOf(op, v());
+      expect(inv, op.kind).toMatchObject({ ...want, undo: true });
+      expect(inv!.data).toEqual(want.data); // exactly these fields
+      expect(inv!.op_id).not.toBe(op.op_id);
+    }
+  });
+
+  it("has nothing to undo for a card or column that isn't there", () => {
+    expect(inverseOf(setDone(5, "nope", true), v())).toBeNull();
+    expect(inverseOf(moveCard(5, "nope", TODO.id), v())).toBeNull();
+    expect(inverseOf(deleteStatus(5, "nope"), v())).toBeNull();
   });
 
   it("gives every op a fresh op_id", () => {
     expect(setDone(1, "c", true).op_id).not.toBe(setDone(1, "c", true).op_id);
+  });
+});
+
+describe("M3b optimistic ops", () => {
+  it("moves cards across and within columns by the neighbour rule", () => {
+    const s = state();
+    const v = buildView(s, [
+      moveCard(5, "c1", DOING.id),
+      moveCard(5, "c3", TODO.id, { before_id: "c2" }),
+    ]);
+    expect(ids(v)).toEqual(["c3", "c2"]);
+    expect(ids(v, DOING.id)).toEqual(["c1"]);
+    expect(v.columns.get(DOING.id)![0].status_id).toBe(DOING.id);
+    expect(s.cards.get("c1")!.status_id).toBe(TODO.id); // confirmed untouched
+    expect(v.children.get("c1")).toEqual({ done: 1, total: 2 }); // children follow
+  });
+
+  it("shows a pasted card with its child count", () => {
+    const op = createCard(5, {
+      status_id: TODO.id,
+      title: "copy",
+      after_id: "c1",
+      tags: ["ui"],
+      children: [
+        { id: "k8", title: "a", is_done: true },
+        { id: "k9", title: "b" },
+      ],
+    });
+    const v = buildView(state(), [op]);
+    expect(ids(v)).toEqual(["c1", op.data.id, "c2", "c3"]);
+    expect(v.columns.get(TODO.id)![1].tags).toEqual(["ui"]);
+    expect(v.children.get(op.data.id)).toEqual({ done: 1, total: 2 });
+  });
+
+  it("creates, renames, moves and deletes columns", () => {
+    const s = state();
+    const names = (x: ReturnType<typeof buildView>) => x.statuses.map((st) => st.name);
+    let v = buildView(s, [createStatus(5, "Review", "red", { after_id: TODO.id }, "s-r")]);
+    expect(names(v)).toEqual(["Todo", "Review", "Doing"]);
+    expect(v.columns.get("s-r")).toEqual([]);
+    v = buildView(s, [
+      updateStatus(5, TODO.id, { color: "green" }),
+      moveStatus(5, TODO.id, { after_id: DOING.id }),
+    ]);
+    expect(names(v)).toEqual(["Doing", "Todo"]);
+    expect(v.statuses[1].color).toBe("green");
+    v = buildView(s, [deleteStatus(5, DOING.id)]);
+    expect(names(v)).toEqual(["Todo"]);
+    expect(v.columns.has(DOING.id)).toBe(false);
+    expect(s.statuses.map((st) => st.name)).toEqual(["Todo", "Doing"]); // confirmed untouched
+  });
+
+  it("waits for the ack to show a restored card", () => {
+    const s = state();
+    applyEvent(s, ev(6, { id: "c1", deleted_ids: ["c1", "k1", "k2"] }));
+    expect(ids(buildView(s, [restoreCard(6, "c1")]))).toEqual(["c2", "c3"]);
   });
 });
 

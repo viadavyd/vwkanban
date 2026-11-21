@@ -1,9 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Card } from "../src/lib/api/boards";
 import { ApiError } from "../src/lib/api/client";
-import { createCard, deleteCard, setDone, type Ack, type Op } from "../src/lib/sync/ops";
-import { BoardStore, CLIENT_ID } from "../src/lib/sync/store";
-import { card, detail, TODO } from "./fixtures";
+import {
+  createCard,
+  deleteCard,
+  deleteStatus,
+  moveCard,
+  setDone,
+  type Ack,
+  type Op,
+} from "../src/lib/sync/ops";
+import { BoardStore, CLIENT_ID, UNDO_DEPTH } from "../src/lib/sync/store";
+import { card, detail, DOING, TODO } from "./fixtures";
 
 /** A fake server: each call waits until the test resolves it. */
 function fakeServer() {
@@ -141,5 +149,106 @@ describe("BoardStore", () => {
     server.calls[1].reject(new ApiError(404, "not_found", "board not found"));
     await flush();
     expect(hooks.ongone).toHaveBeenCalled();
+  });
+
+  it("undoes with base_seq = the seq the undone op got, sent with undo: true", async () => {
+    const { store, server, col } = setup([card("c1", "a0"), card("c2", "a1")]);
+    const mv = moveCard(1, "c1", DOING.id);
+    store.submit(mv);
+    server.calls[0].resolve(ack(mv, 2, { card: card("c1", "a0", { status_id: DOING.id }) }));
+    await flush();
+    expect(col()).toEqual(["c2"]);
+
+    const inv = store.undo()!;
+    expect(col()).toEqual(["c1", "c2"]); // optimistic: back before c2
+    await flush();
+    expect(server.calls[1].op).toMatchObject({
+      op_id: inv.op_id,
+      kind: "card.move",
+      undo: true,
+      base_seq: 2,
+      data: { id: "c1", status_id: TODO.id, before_id: "c2" },
+    });
+    server.calls[1].resolve(ack(inv, 3, { card: card("c1", "a0") }));
+    await flush();
+    expect(store.canUndo).toBe(false);
+    expect(store.undo()).toBeNull(); // undos are not undoable (no redo in the MVP)
+  });
+
+  it("can undo an op that is still in flight: its base_seq is filled in once acked", async () => {
+    const { store, server } = setup();
+    const toggle = setDone(1, "c1", true);
+    store.submit(toggle);
+    store.undo();
+    expect(store.view.columns.get(TODO.id)![0].is_done).toBe(false);
+    server.calls[0].resolve(ack(toggle, 2, { card: card("c1", "a0", { is_done: true }) }));
+    await flush();
+    expect(server.calls[1].op).toMatchObject({ undo: true, base_seq: 2, kind: "card.update" });
+  });
+
+  it("drops the undo entry of a rejected op, and a queued undo of it", async () => {
+    const { store, server } = setup([card("c1", "a0"), card("c2", "a1")]);
+    const first = setDone(1, "c1", true);
+    const second = setDone(1, "c2", true);
+    store.submit(first);
+    store.submit(second);
+    store.undo(); // undoes `second`, which is still queued behind `first`
+    server.calls[0].resolve(ack(first, 2, { card: card("c1", "a0", { is_done: true }) }));
+    await flush();
+    server.calls[1].reject(new ApiError(410, "gone", "#2 was deleted", { current: null }));
+    await flush();
+    expect(server.calls).toHaveLength(2); // the undo of `second` is never sent
+    expect(store.pendingCount).toBe(0);
+    expect(store.canUndo).toBe(true); // `first` can still be undone
+    store.undo();
+    await flush();
+    expect(server.calls[2].op).toMatchObject({ base_seq: 2, data: { id: "c1" } });
+  });
+
+  it("keeps the last 50 undoable ops", async () => {
+    const { store, server } = setup();
+    for (let i = 0; i < UNDO_DEPTH + 5; i++) {
+      const op = setDone(1, "c1", i % 2 === 0);
+      store.submit(op);
+      await flush();
+      server.calls
+        .at(-1)!
+        .resolve(ack(op, i + 2, { card: card("c1", "a0", { is_done: i % 2 === 0 }) }));
+      await flush();
+    }
+    let n = 0;
+    while (store.undo()) n++;
+    expect(n).toBe(UNDO_DEPTH);
+  });
+
+  it("has nothing to undo at first, and skips ops it can't invert", () => {
+    const { store } = setup();
+    expect(store.undo()).toBeNull();
+    store.submit(setDone(1, "missing", true));
+    expect(store.canUndo).toBe(false);
+    store.submit(setDone(1, "c1", true), { undoable: false });
+    expect(store.canUndo).toBe(false);
+  });
+
+  it("resyncs after a rejected column op", async () => {
+    const { store, server, hooks } = setup();
+    store.submit(deleteStatus(1, TODO.id));
+    expect(store.view.statuses.map((s) => s.id)).toEqual([DOING.id]);
+    server.calls[0].reject(
+      new ApiError(422, "validation", "column 'Todo' is not empty", { current: TODO }),
+    );
+    await flush();
+    expect(hooks.onmessage).toHaveBeenCalledWith("column 'Todo' is not empty");
+    expect(hooks.load).toHaveBeenCalledTimes(1);
+    expect(store.view.statuses.map((s) => s.id)).toEqual([TODO.id, DOING.id]);
+  });
+
+  it("exposes a card's children for snapshots", () => {
+    const { store } = setup([
+      card("c1", "a0"),
+      card("k2", "a1", { status_id: null, parent_card_id: "c1" }),
+      card("k1", "a0", { status_id: null, parent_card_id: "c1" }),
+    ]);
+    expect(store.childrenOf("c1").map((c) => c.id)).toEqual(["k1", "k2"]);
   });
 });

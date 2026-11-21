@@ -36,3 +36,30 @@ export function moveCursor(lengths: number[], cur: Cursor, dir: Direction, want 
 export function rowAfterDelete(row: number, length: number): number {
   return clampRow(row, length - 1);
 }
+
+/** H/L: where column `i` goes, as the neighbour it passes, or null at the edge. */
+export function columnMove(
+  ids: readonly string[],
+  i: number,
+  dir: "left" | "right",
+): { to: number; after_id?: string; before_id?: string } | null {
+  if (i < 0 || i >= ids.length) return null;
+  if (dir === "left") return i === 0 ? null : { to: i - 1, before_id: ids[i - 1] };
+  return i === ids.length - 1 ? null : { to: i + 1, after_id: ids[i + 1] };
+}
+
+export const COLUMN_NAME_MAX = 40;
+
+/** An error for a column name, or null if it is fine. Names are unique per board,
+ * case-insensitively (the server checks too). `self` = the column being renamed. */
+export function columnNameError(
+  name: string,
+  columns: readonly { id: string; name: string }[],
+  self?: string,
+): string | null {
+  const n = name.trim();
+  if (!n) return "a name is required";
+  if (n.length > COLUMN_NAME_MAX) return `at most ${COLUMN_NAME_MAX} characters`;
+  const clash = columns.find((c) => c.id !== self && c.name.toLowerCase() === n.toLowerCase());
+  return clash ? `a column named "${clash.name}" already exists` : null;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { colorOf, PALETTE, tagColor } from "../src/lib/colors";
+import { COLOR_NAMES, colorOf, nextColor, PALETTE, tagColor } from "../src/lib/colors";
 
 describe("colors", () => {
   it("maps status colours and falls back to gray", () => {
@@ -15,5 +15,14 @@ describe("colors", () => {
     }
     const spread = new Set(Array.from({ length: 50 }, (_, i) => tagColor(`tag${i}`)));
     expect(spread.size).toBeGreaterThan(4);
+  });
+});
+
+describe("nextColor", () => {
+  it("cycles through the palette in order", () => {
+    expect(nextColor("red")).toBe("yellow");
+    expect(nextColor("gray")).toBe("red");
+    expect(nextColor("nope")).toBe("red");
+    expect(COLOR_NAMES).toHaveLength(8);
   });
 });

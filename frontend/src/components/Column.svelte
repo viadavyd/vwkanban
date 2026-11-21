@@ -12,6 +12,7 @@
     cards,
     current,
     selectedId,
+    markedId = null,
     children,
     pending,
     draftAt = null,
@@ -24,6 +25,8 @@
     /** this column holds the selection */
     current: boolean;
     selectedId: string | null;
+    /** the card marked with x (dimmed until it is moved) */
+    markedId?: string | null;
     children: Map<string, ChildCount>;
     pending: Set<string>;
     draftAt?: number | null;
@@ -50,6 +53,7 @@
       <CardTile
         {card}
         selected={card.id === selectedId}
+        marked={card.id === markedId}
         pending={pending.has(card.id)}
         children={children.get(card.id)}
         {onselect}

@@ -92,6 +92,8 @@ class Status(Base):
     name: Mapped[str] = mapped_column(Text)
     color: Mapped[str] = mapped_column(Text)
     position: Mapped[str] = mapped_column(POSITION)
+    # Per field: {"name"|"color"|"position"|"created": {"seq", "client"}}; read by undo checks.
+    field_meta: Mapped[dict] = mapped_column(JSONB, server_default="{}")
 
 
 class Card(Base):

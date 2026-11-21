@@ -202,7 +202,9 @@ async def test_create_validation(setup, data):
         {"kind": "card.nope", "data": {}},
         {"kind": "card.update", "data": {"id": "x", "fields": {"is_done": True}}},
         {"kind": "card.update", "data": {"id": str(uuid7()), "fields": {"title": "t"}}},
-        {"kind": "card.delete", "data": {"id": str(uuid7())}, "undo": True},
+        {"kind": "card.delete", "data": {"id": str(uuid7())}, "bogus": True},
+        {"kind": "card.restore", "data": {"id": str(uuid7())}},  # restore is undo-only
+        {"kind": "card.move", "data": {"id": str(uuid7()), "parent_id": str(uuid7())}},
     ],
 )
 async def test_envelope_validation(setup, op):

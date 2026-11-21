@@ -7,23 +7,46 @@
 import type { Card, Status } from "../api/boards";
 import { uuid7 } from "../ids";
 
-export interface CardCreateData {
+/** A child pasted with its parent (`p` of a copied card). */
+export interface ChildData {
   id: string;
-  status_id: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  date?: string | null;
+  is_done?: boolean;
+}
+
+export interface Neighbours {
   after_id?: string;
   before_id?: string;
-  title: string;
+}
+
+export interface CardCreateData extends ChildData, Neighbours {
+  status_id: string;
+  children?: ChildData[];
 }
 
 interface OpBase {
   op_id: string;
+  /** For an undo: the seq of the op being undone (the store fills it in when sending). */
   base_seq: number;
+  undo?: boolean;
 }
 
 export type Op =
   | (OpBase & { kind: "card.create"; data: CardCreateData })
   | (OpBase & { kind: "card.update"; data: { id: string; fields: { is_done: boolean } } })
-  | (OpBase & { kind: "card.delete"; data: { id: string } });
+  | (OpBase & { kind: "card.delete"; data: { id: string } })
+  | (OpBase & { kind: "card.move"; data: { id: string; status_id: string } & Neighbours })
+  | (OpBase & { kind: "card.restore"; data: { id: string } })
+  | (OpBase & {
+      kind: "status.create";
+      data: { id: string; name: string; color: string } & Neighbours;
+    })
+  | (OpBase & { kind: "status.update"; data: { id: string; name?: string; color?: string } })
+  | (OpBase & { kind: "status.move"; data: { id: string } & Neighbours })
+  | (OpBase & { kind: "status.delete"; data: { id: string } });
 
 export interface BoardEvent {
   seq: number;
@@ -31,7 +54,16 @@ export interface BoardEvent {
   client_id: string;
   actor: { id: string; username: string };
   kind: Op["kind"];
-  data: { card?: Card; id?: string; deleted_ids?: string[] };
+  data: {
+    card?: Card;
+    /** pasted or restored children */
+    children?: Card[];
+    id?: string;
+    deleted_ids?: string[];
+    status?: Status;
+    /** soft-deleted cards purged with a deleted column */
+    purged_ids?: string[];
+  };
 }
 
 export interface Ack {
@@ -44,6 +76,7 @@ export interface Ack {
 /** Server state at `seq`. */
 export interface Confirmed {
   seq: number;
+  /** in column order */
   statuses: Status[];
   cards: Map<string, Card>;
 }
@@ -81,37 +114,128 @@ export function deleteCard(seq: number, id: string): Op {
   return { ...base(seq), kind: "card.delete", data: { id } };
 }
 
-/** The op that undoes `op`, given the card as it was before `op` (M3b sends these with
- * `undo: true`). Delete → restore arrives with card.restore in M3b. */
-export function inverseOf(op: Op, before: Card | undefined, seq: number): Op | null {
+export function moveCard(seq: number, id: string, statusId: string, at: Neighbours = {}): Op {
+  return { ...base(seq), kind: "card.move", data: { id, status_id: statusId, ...defined(at) } };
+}
+
+export function restoreCard(seq: number, id: string): Op {
+  return { ...base(seq), kind: "card.restore", data: { id } };
+}
+
+export function createStatus(
+  seq: number,
+  name: string,
+  color: string,
+  at: Neighbours = {},
+  id = uuid7(),
+): Op {
+  return { ...base(seq), kind: "status.create", data: { id, name, color, ...defined(at) } };
+}
+
+export function updateStatus(seq: number, id: string, fields: { name?: string; color?: string }) {
+  return { ...base(seq), kind: "status.update", data: { id, ...fields } } satisfies Op;
+}
+
+export function moveStatus(seq: number, id: string, at: Neighbours = {}): Op {
+  return { ...base(seq), kind: "status.move", data: { id, ...defined(at) } };
+}
+
+export function deleteStatus(seq: number, id: string): Op {
+  return { ...base(seq), kind: "status.delete", data: { id } };
+}
+
+/** Drops undefined neighbours, so the JSON only carries the ones that exist. */
+function defined(at: Neighbours): Neighbours {
+  return {
+    ...(at.after_id && { after_id: at.after_id }),
+    ...(at.before_id && { before_id: at.before_id }),
+  };
+}
+
+/** The neighbours of `list[i]` (for putting it back where it was). */
+function around(list: readonly { id: string }[], i: number): Neighbours {
+  return defined({ after_id: list[i - 1]?.id, before_id: list[i + 1]?.id });
+}
+
+// --- undo ----------------------------------------------------------------------------
+
+/** The op that undoes `op`, from the view just before `op` was applied; null if there is
+ * nothing to undo. Sent with `undo: true`; the store sets `base_seq` to the seq `op` got. */
+export function inverseOf(op: Op, view: BoardView): Op | null {
+  const inv = inverseOp(op, view);
+  return inv && { ...inv, undo: true };
+}
+
+function inverseOp(op: Op, view: BoardView): Op | null {
   switch (op.kind) {
     case "card.create":
-      return deleteCard(seq, op.data.id);
-    case "card.update":
-      return before ? setDone(seq, before.id, before.is_done) : null;
+      return deleteCard(0, op.data.id);
+    case "card.update": {
+      const hit = findCard(view.columns, op.data.id);
+      return hit && setDone(0, op.data.id, hit[0][hit[1]].is_done);
+    }
+    case "card.move": {
+      const hit = findCard(view.columns, op.data.id);
+      if (!hit) return null;
+      const [col, i] = hit;
+      return moveCard(0, op.data.id, col[i].status_id!, around(col, i));
+    }
     case "card.delete":
-      return null;
+      return restoreCard(0, op.data.id);
+    case "card.restore":
+      return deleteCard(0, op.data.id);
+    case "status.create":
+      return deleteStatus(0, op.data.id);
+    case "status.update": {
+      const s = view.statuses.find((x) => x.id === op.data.id);
+      if (!s) return null;
+      return updateStatus(0, s.id, {
+        ...(op.data.name !== undefined && { name: s.name }),
+        ...(op.data.color !== undefined && { color: s.color }),
+      });
+    }
+    case "status.move": {
+      const i = view.statuses.findIndex((x) => x.id === op.data.id);
+      return i < 0 ? null : moveStatus(0, op.data.id, around(view.statuses, i));
+    }
+    case "status.delete": {
+      const i = view.statuses.findIndex((x) => x.id === op.data.id);
+      if (i < 0) return null;
+      const s = view.statuses[i];
+      return createStatus(0, s.name, s.color, around(view.statuses, i), s.id);
+    }
   }
 }
 
 // --- confirmed state -----------------------------------------------------------------
 
+// Keys are ASCII, so JS string order is the server's byte order (COLLATE "C").
+const byPosition = (a: { id: string; position: string }, b: { id: string; position: string }) =>
+  a.position < b.position ? -1 : a.position > b.position ? 1 : a.id < b.id ? -1 : 1;
+
 export function confirmedFrom(seq: number, statuses: Status[], cards: Card[]): Confirmed {
-  return { seq, statuses, cards: new Map(cards.map((c) => [c.id, c])) };
+  return {
+    seq,
+    statuses: [...statuses].sort(byPosition),
+    cards: new Map(cards.map((c) => [c.id, c])),
+  };
 }
 
 /** Applies a server event in place (caller guarantees seq order). */
 export function applyEvent(state: Confirmed, ev: BoardEvent): void {
-  if (ev.data.card) state.cards.set(ev.data.card.id, ev.data.card);
-  for (const id of ev.data.deleted_ids ?? []) state.cards.delete(id);
+  const d = ev.data;
+  if (d.card) state.cards.set(d.card.id, d.card);
+  for (const c of d.children ?? []) state.cards.set(c.id, c);
+  for (const id of [...(d.deleted_ids ?? []), ...(d.purged_ids ?? [])]) state.cards.delete(id);
+  if (d.status) {
+    const s = d.status;
+    state.statuses = [...state.statuses.filter((x) => x.id !== s.id), s].sort(byPosition);
+  }
+  if (ev.kind === "status.delete") state.statuses = state.statuses.filter((x) => x.id !== d.id);
   state.seq = ev.seq;
 }
 
 // --- view ----------------------------------------------------------------------------
-
-// Keys are ASCII, so JS string order is the server's byte order (COLLATE "C").
-const byPosition = (a: Card, b: Card) =>
-  a.position < b.position ? -1 : a.position > b.position ? 1 : a.id < b.id ? -1 : 1;
 
 function placeholder(d: CardCreateData): Card {
   return {
@@ -121,10 +245,10 @@ function placeholder(d: CardCreateData): Card {
     parent_card_id: null,
     position: "",
     title: d.title,
-    description: "",
-    is_done: false,
-    tags: [],
-    date: null,
+    description: d.description ?? "",
+    is_done: d.is_done ?? false,
+    tags: d.tags ?? [],
+    date: d.date ?? null,
     field_meta: {},
     created_at: "",
     updated_at: "",
@@ -139,6 +263,18 @@ function findCard(columns: Map<string, Card[]>, id: string): [Card[], number] | 
   return null;
 }
 
+/** Inserts by the server's neighbour rule: after `after_id`, else before `before_id`, else
+ * at the end. */
+function insert<T extends { id: string }>(list: T[], item: T, at: Neighbours): void {
+  let i = at.after_id ? list.findIndex((x) => x.id === at.after_id) : -1;
+  if (i >= 0) i += 1;
+  else {
+    i = at.before_id ? list.findIndex((x) => x.id === at.before_id) : -1;
+    if (i < 0) i = list.length;
+  }
+  list.splice(i, 0, item);
+}
+
 /** Applies one pending op to the view in place. Columns touched are already copies. */
 export function applyOptimistic(view: BoardView, op: Op): void {
   switch (op.kind) {
@@ -146,15 +282,12 @@ export function applyOptimistic(view: BoardView, op: Op): void {
       const d = op.data;
       const col = view.columns.get(d.status_id);
       if (!col || findCard(view.columns, d.id)) return;
-      // Same neighbour rule as the server: after_id, else before_id, else the end.
-      let i = d.after_id ? col.findIndex((c) => c.id === d.after_id) : -1;
-      if (i >= 0) i += 1;
-      else {
-        i = d.before_id ? col.findIndex((c) => c.id === d.before_id) : -1;
-        if (i < 0) i = col.length;
-      }
-      col.splice(i, 0, placeholder(d));
+      insert(col, placeholder(d), d);
       view.pending.add(d.id);
+      if (d.children?.length) {
+        const done = d.children.filter((c) => c.is_done).length;
+        view.children.set(d.id, { done, total: d.children.length });
+      }
       return;
     }
     case "card.update": {
@@ -168,6 +301,47 @@ export function applyOptimistic(view: BoardView, op: Op): void {
       view.children.delete(op.data.id);
       return;
     }
+    case "card.move": {
+      const d = op.data;
+      const hit = findCard(view.columns, d.id);
+      const target = view.columns.get(d.status_id);
+      if (!hit || !target) return;
+      const [moved] = hit[0].splice(hit[1], 1);
+      insert(
+        target,
+        moved.status_id === d.status_id ? moved : { ...moved, status_id: d.status_id },
+        d,
+      );
+      return;
+    }
+    case "card.restore":
+      // The deleted card isn't in the view any more; it shows up with the ack.
+      return;
+    case "status.create": {
+      const d = op.data;
+      if (view.columns.has(d.id)) return;
+      view.statuses = [...view.statuses];
+      insert(view.statuses, { id: d.id, name: d.name, color: d.color, position: "" }, d);
+      view.columns.set(d.id, []);
+      return;
+    }
+    case "status.update": {
+      const { id, ...fields } = op.data;
+      view.statuses = view.statuses.map((s) => (s.id === id ? { ...s, ...fields } : s));
+      return;
+    }
+    case "status.move": {
+      const i = view.statuses.findIndex((s) => s.id === op.data.id);
+      if (i < 0) return;
+      view.statuses = [...view.statuses];
+      const [moved] = view.statuses.splice(i, 1);
+      insert(view.statuses, moved, op.data);
+      return;
+    }
+    case "status.delete":
+      view.statuses = view.statuses.filter((s) => s.id !== op.data.id);
+      view.columns.delete(op.data.id);
+      return;
   }
 }
 
@@ -194,4 +368,9 @@ export function buildView(state: Confirmed, pending: readonly Op[]): BoardView {
   };
   for (const op of pending) applyOptimistic(view, op);
   return view;
+}
+
+/** A card's live children in order (confirmed state). */
+export function childrenOf(state: Confirmed, id: string): Card[] {
+  return [...state.cards.values()].filter((c) => c.parent_card_id === id).sort(byPosition);
 }

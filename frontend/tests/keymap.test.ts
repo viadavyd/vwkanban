@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { KEYMAP, keyName, lookup, MODE_LABEL, type Mode } from "../src/lib/keys/keymap";
+import {
+  KEYMAP,
+  keyName,
+  lookup,
+  MODE_LABEL,
+  PREFIX,
+  SUBMODES,
+  type Mode,
+} from "../src/lib/keys/keymap";
 
 const modes = Object.keys(MODE_LABEL) as Mode[];
 
@@ -59,11 +67,22 @@ describe("keymap", () => {
     expect(keys.sort()).toEqual(["?", "Enter", "Q", "a", "d", "h", "j", "k", "l", "r"].sort());
   });
 
-  it("binds the M3a board keys", () => {
+  it("binds the M3a and M3b board keys", () => {
     const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(
-      ["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l"].sort(),
+      [
+        ...["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l"],
+        ...["y", "p", "x", "u", "s", "H", "L"],
+      ].sort(),
     );
+  });
+
+  it("binds the column commands under the s prefix", () => {
+    expect(lookup("board", "s")).toBe("columnPrefix");
+    expect(PREFIX.column).toBe("s");
+    expect(SUBMODES.board).toEqual(["column"]);
+    const keys = KEYMAP.filter((b) => b.mode === "column").flatMap((b) => b.keys);
+    expect(keys.sort()).toEqual(["C-c", "Esc", "a", "c", "d", "r"].sort());
   });
 
   it("names keys", () => {

@@ -1,5 +1,10 @@
 <script lang="ts">
-  let { title, mode, username }: { title?: string; mode: string; username: string } = $props();
+  let {
+    title,
+    mode,
+    pending = "",
+    username,
+  }: { title?: string; mode: string; pending?: string; username: string } = $props();
 </script>
 
 <header>
@@ -8,7 +13,14 @@
         / {title}
       </span>{/if}
   </span>
-  <span class="mode" data-testid="mode">-- {mode.toUpperCase()} --</span>
+  <span class="mode">
+    <span data-testid="mode">-- {mode.toUpperCase()} --</span>{#if pending}<span
+        class="pending"
+        data-testid="pending"
+      >
+        {pending}
+      </span>{/if}
+  </span>
   <span class="hint"><kbd>?</kbd> help</span>
   <span data-testid="username">{username}</span>
 </header>
@@ -32,6 +44,10 @@
     flex: 1;
     text-align: center;
     white-space: nowrap;
+  }
+  .pending {
+    margin-left: 1rem;
+    font-weight: bold;
   }
   .hint {
     color: #555;
