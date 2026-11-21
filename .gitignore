@@ -11,3 +11,6 @@ dist/
 dist-spike/
 test-results/
 playwright-report/
+
+# Playwright login state (e2e/app/auth.setup.ts)
+frontend/e2e/.auth/
