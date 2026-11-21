@@ -10,12 +10,15 @@ from vwkanban.auth.bootstrap import ensure_admin
 from vwkanban.auth.origin import check_origin
 from vwkanban.auth.routes import router as auth_router
 from vwkanban.auth.sessions import purge_expired
+from vwkanban.boards.members import router as members_router
 from vwkanban.boards.routes import router as boards_router
 from vwkanban.config import Settings, get_settings
 from vwkanban.db import make_engine, make_sessionmaker
 from vwkanban.errors import install_error_handlers
+from vwkanban.sync.hub import Hub
 from vwkanban.sync.models import trim_events
 from vwkanban.sync.routes import router as sync_router
+from vwkanban.sync.ws import router as ws_router
 
 HEALTH_DB_TIMEOUT_S = 2.0
 
@@ -40,6 +43,7 @@ def build_api_router() -> APIRouter:
     api.include_router(health)
     api.include_router(auth_router)
     api.include_router(boards_router)
+    api.include_router(members_router)
     api.include_router(sync_router)
     return api
 
@@ -60,8 +64,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = make_engine(settings.database_url)
     app.state.sessionmaker = make_sessionmaker(app.state.engine)
+    app.state.hub = Hub()
     install_error_handlers(app)
     app.include_router(build_api_router())
+    # Outside the api router: its Origin dependency takes a Request; the WS handshake
+    # checks Origin itself (sync/ws.py).
+    app.include_router(ws_router)
     return app
 
 

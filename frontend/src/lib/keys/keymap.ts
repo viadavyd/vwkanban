@@ -4,8 +4,9 @@
 // Modes stack: a screen mode (dashboard, board) with overlays on top (help, prompt,
 // confirm). Esc / Ctrl+C always go back exactly one level; the dashboard is the top level.
 // `column` is the board's `s` prefix (plan §4.3: the only prefix, no timeout, Esc cancels).
+// `members` is the board's `M` overlay (list; the owner adds and removes).
 
-export type Mode = "dashboard" | "board" | "column" | "help" | "prompt" | "confirm";
+export type Mode = "dashboard" | "board" | "column" | "members" | "help" | "prompt" | "confirm";
 
 export type Action =
   | "left"
@@ -21,6 +22,7 @@ export type Action =
   | "mark"
   | "undo"
   | "columnPrefix"
+  | "members"
   | "columnLeft"
   | "columnRight"
   | "cycleColor"
@@ -45,6 +47,7 @@ export const MODE_LABEL: Record<Mode, string> = {
   dashboard: "Dashboard",
   board: "Board",
   column: "Columns (after s)",
+  members: "Members (after M)",
   help: "Help",
   prompt: "Prompt",
   confirm: "Confirm",
@@ -89,6 +92,7 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "board", keys: ["s"], action: "columnPrefix", help: "column commands (below)" },
   { mode: "board", keys: ["H"], action: "columnLeft", help: "move the column left" },
   { mode: "board", keys: ["L"], action: "columnRight", help: "move the column right" },
+  { mode: "board", keys: ["M"], action: "members", help: "members of this board" },
   {
     mode: "board",
     keys: ["Esc", "C-c"],
@@ -104,6 +108,13 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "column", keys: ["d"], action: "delete", help: "delete the column (only if empty)" },
   { mode: "column", keys: ["Esc", "C-c"], action: "back", help: "cancel" },
 
+  // Members overlay: `M` on the board
+  { mode: "members", keys: ["j"], action: "down", help: "next member" },
+  { mode: "members", keys: ["k"], action: "up", help: "previous member" },
+  { mode: "members", keys: ["a"], action: "create", help: "add a member by username (owner)" },
+  { mode: "members", keys: ["d"], action: "delete", help: "remove the member (owner)" },
+  { mode: "members", keys: ["Esc", "C-c"], action: "back", help: "close" },
+
   // Overlays
   { mode: "help", keys: ["Esc", "C-c", "?"], action: "back", help: "close help" },
   { mode: "prompt", keys: ["Enter"], action: "submit", help: "save" },
@@ -116,7 +127,7 @@ export const KEYMAP: readonly Binding[] = [
 export const PREFIX: Partial<Record<Mode, string>> = { column: "s" };
 
 /** Modes whose help is shown along with a screen's own (the screen's prefixes). */
-export const SUBMODES: Partial<Record<Mode, Mode[]>> = { board: ["column"] };
+export const SUBMODES: Partial<Record<Mode, Mode[]>> = { board: ["column", "members"] };
 
 /** Modes whose keys also work while focus is in a text input (the input is the prompt). */
 export const INPUT_MODES: ReadonlySet<Mode> = new Set(["prompt"]);

@@ -15,6 +15,8 @@
   let bootError = $state("");
   // The board we came back from, so the dashboard keeps it selected.
   let lastBoardId = $state<string | undefined>();
+  // Why the board closed on its own (removed from it, deleted): shown on the dashboard.
+  let notice = $state("");
 
   const boardId = $derived(BOARD_PATH.exec(path)?.[1]);
 
@@ -52,11 +54,13 @@
   }
 
   function openBoard(id: string) {
+    notice = "";
     lastBoardId = id;
     navigate(`/b/${id}`);
   }
 
-  function backToDashboard() {
+  function backToDashboard(why = "") {
+    notice = why;
     lastBoardId = boardId ?? lastBoardId;
     navigate("/");
   }
@@ -86,7 +90,13 @@
     <Board id={boardId} {user} onback={backToDashboard} onloggedout={onLoggedOut} />
   {/key}
 {:else}
-  <Dashboard {user} initialSelected={lastBoardId} onopen={openBoard} onloggedout={onLoggedOut} />
+  <Dashboard
+    {user}
+    initialSelected={lastBoardId}
+    {notice}
+    onopen={openBoard}
+    onloggedout={onLoggedOut}
+  />
 {/if}
 
 <style>

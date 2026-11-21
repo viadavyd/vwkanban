@@ -5,6 +5,11 @@ export const BASE_URL = process.env.VWK_BASE_URL ?? "http://localhost";
 export const ORIGIN = new URL(BASE_URL).origin;
 /** Login state written by auth.setup.ts. */
 export const STATE = "e2e/.auth/state.json";
+/** The admin's username (the user in STATE). */
+export const ADMIN = process.env.ADMIN_USERNAME ?? "admin";
+/** The second user (for two-user specs), and their login state. */
+export const BOB = process.env.BOB_USERNAME ?? "bob";
+export const BOB_STATE = "e2e/.auth/bob.json";
 
 export const column = (page: Page, name: string) => page.getByRole("region", { name });
 
@@ -23,10 +28,10 @@ export async function expectSelected(page: Page, title: string) {
   await expect(page.locator('[data-card][aria-selected="true"]')).toHaveCount(1);
 }
 
-/** Resolves when the response to the next op of `kind` arrives (ops are sent in order,
- * so every op queued before it is done too). */
-export function opDone(page: Page, kind: string) {
-  return page.waitForResponse(
-    (r) => r.url().includes("/ops") && r.request().postDataJSON()?.op?.kind === kind,
-  );
+/** Waits until the board is live and every op it sent is answered (the top bar's sync
+ * dot). Use after a key that sends an op, and after a reload before reading the board. */
+export async function settled(page: Page) {
+  const sync = page.getByTestId("sync");
+  await expect(sync).toHaveAttribute("data-state", "live");
+  await expect(sync).toHaveAttribute("data-pending", "0");
 }

@@ -20,4 +20,4 @@ COPY migrations ./migrations
 ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
 USER vwk
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn vwkanban.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips '*'"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn vwkanban.main:app --host 0.0.0.0 --port 8000 --workers 1 --ws-max-size 65536 --proxy-headers --forwarded-allow-ips '*'"]

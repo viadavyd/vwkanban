@@ -1,5 +1,4 @@
 import { request } from "./client";
-import type { Ack, Op } from "../sync/ops";
 
 export interface StatusCount {
   name: string;
@@ -67,7 +66,19 @@ export const deleteBoard = (id: string) => request<void>("DELETE", `/boards/${id
 
 export const getBoard = (id: string) => request<BoardDetail>("GET", `/boards/${id}`);
 
-/** Sends one op (plan §3.2). Resolves with the ack; a reject throws ApiError whose
- * `details.current` is the entity's server state (or null). */
-export const postOp = (boardId: string, clientId: string, op: Op) =>
-  request<Ack>("POST", `/boards/${boardId}/ops`, { client_id: clientId, op });
+export interface Member {
+  user_id: string;
+  username: string;
+  role: "owner" | "editor";
+}
+
+export const listMembers = (boardId: string) =>
+  request<Member[]>("GET", `/boards/${boardId}/members`);
+
+/** Adds a user as an editor (owner only). */
+export const addMember = (boardId: string, username: string) =>
+  request<Member>("POST", `/boards/${boardId}/members`, { username });
+
+/** Removes a member (owner only); their open sockets on the board are closed. */
+export const removeMember = (boardId: string, userId: string) =>
+  request<void>("DELETE", `/boards/${boardId}/members/${userId}`);

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from sqlalchemy import delete, func, select, update
 
 from vwkanban.auth.deps import CurrentUser, Db
@@ -16,6 +16,7 @@ from vwkanban.boards.schemas import (
 )
 from vwkanban.boards.summary import dashboard
 from vwkanban.ids import uuid7
+from vwkanban.sync.ws import CLOSE_BOARD_GONE
 
 router = APIRouter(prefix="/boards", tags=["boards"])
 
@@ -58,10 +59,10 @@ async def rename_board(body: BoardIn, owner: Owner, db: Db) -> DashboardItem:
 
 
 @router.delete("/{board_id}", status_code=204)
-async def delete_board(owner: Owner, db: Db) -> None:
+async def delete_board(owner: Owner, db: Db, request: Request) -> None:
     await db.execute(delete(Board).where(Board.id == owner.board.id))
     await db.commit()
-    # M4: also close the board's sockets with 4404.
+    request.app.state.hub.close_board(owner.board.id, CLOSE_BOARD_GONE)
 
 
 @router.get("/{board_id}")

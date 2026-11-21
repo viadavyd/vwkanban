@@ -36,7 +36,22 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run alembic upgrade head
-      - run: uv run pytest
+      - run: uv run pytest --ignore=tests/ws/test_latency.py
+      # Plan §7 remote-latency target, report-only on shared runners. The 20 ms delay is
+      # put on the test server's port only, so DB round-trips aren't delayed.
+      - name: Remote latency with 20 ms netem on the WS port (report-only)
+        env:
+          VWK_WS_PORT: "18765"
+        run: |
+          sudo tc qdisc add dev lo root handle 1: prio
+          sudo tc qdisc add dev lo parent 1:3 handle 30: netem delay 20ms
+          for dir in dport sport; do
+            sudo tc filter add dev lo parent 1:0 protocol ip u32 \
+              match ip "$dir" "$VWK_WS_PORT" 0xffff flowid 1:3
+          done
+          uv run pytest -s tests/ws/test_latency.py
+      - if: always()
+        run: sudo tc qdisc del dev lo root || true
 
   frontend:
     runs-on: ubuntu-24.04
@@ -71,8 +86,9 @@ jobs:
       - run: docker compose up -d --build --wait --wait-timeout 180
       - run: curl -fsS http://vwk.test/api/healthz | tee /dev/stderr | grep -q '"status":"ok"'
       - run: curl -fsS http://vwk.test/ | grep -q '<div id="app">'
-      # Login is rate-limited to 5/min per IP: the curl login and the e2e (login spec 2,
-      # dashboard spec 1) use 4 of them.
+      # Login is rate-limited to 5/min per IP (a burst of 5, then 1 per 12 s): the curl
+      # login, then the e2e a minute later (npm ci + browser install in between): setup 2
+      # (admin, bob), dashboard spec 1, login spec 2; the board specs run in between.
       - name: Log in over plain HTTP (cookie without Secure)
         run: |
           set -eu
@@ -85,6 +101,29 @@ jobs:
           echo "$cookie" | grep -qi 'httponly'
           if echo "$cookie" | grep -qi 'secure'; then echo "cookie is Secure over http" >&2; exit 1; fi
           curl -fsS -b jar.txt http://vwk.test/api/auth/me | tee /dev/stderr | grep -q "\"username\":\"$ADMIN_USERNAME\""
+      # nginx must pass the WebSocket upgrade: 101 with the right Origin; with a bad one
+      # the app accepts and closes at once with 4400 (close frame 88 02 11 30).
+      - name: Board WebSocket through nginx
+        run: |
+          set -eu
+          board=$(curl -fsS -b jar.txt -H 'Origin: http://vwk.test' -H 'Content-Type: application/json' \
+            -d '{"title":"ws smoke"}' http://vwk.test/api/boards | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          upgrade() {
+            curl -s -i -N --max-time 3 -b jar.txt -H "Origin: $1" \
+              -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+              -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+              "http://vwk.test/api/boards/$board/ws" || true
+          }
+          upgrade http://vwk.test | head -1 | tee /dev/stderr | grep -q '^HTTP/1.1 101'
+          upgrade http://evil.test | od -An -tx1 | tr -d ' \n' | tee /dev/stderr | grep -q '88021130$'
+          curl -fsS -b jar.txt -X DELETE -H 'Origin: http://vwk.test' "http://vwk.test/api/boards/$board"
+      - name: Create the second e2e user (two-user real-time specs)
+        run: |
+          set -eu
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          echo "BOB_PASSWORD=$pw" >> "$GITHUB_ENV"
+          printf '%s\n' "$pw" | docker compose exec -T app vwk user create bob --password-stdin
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22.23.5"

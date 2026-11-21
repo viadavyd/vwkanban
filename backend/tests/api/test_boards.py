@@ -48,6 +48,9 @@ BOARD_ROUTES = [
     ("PATCH", "/api/boards/{board_id}", {"title": "Renamed"}, "owner"),
     ("DELETE", "/api/boards/{board_id}", None, "owner"),
     ("POST", "/api/boards/{board_id}/ops", _create_op, "editor"),
+    ("GET", "/api/boards/{board_id}/members", None, "editor"),
+    ("POST", "/api/boards/{board_id}/members", {"username": "carol"}, "owner"),
+    ("DELETE", "/api/boards/{board_id}/members/{user_id}", None, "owner"),
 ]
 
 
@@ -72,13 +75,17 @@ async def test_access_matrix(make_client, engine, alice, method, path, body, min
     bob = await add_user(engine, "bob", PW)
     if who == "editor":
         await add_member(engine, board, bob, "editor")
+    # Members routes: carol is the one added, or (as an editor) the one removed.
+    carol = await add_user(engine, "carol", PW)
+    if method == "DELETE" and "{user_id}" in path:
+        await add_member(engine, board, carol, "editor")
 
     async with make_client() as c:
         if who == "owner":
             await login_as(c, "alice")
         elif who in ("editor", "stranger"):
             await login_as(c, "bob")
-        r = await c.request(method, path.format(board_id=board), json=body)
+        r = await c.request(method, path.format(board_id=board, user_id=carol), json=body)
 
     expected = {
         "anonymous": 401,
@@ -97,9 +104,16 @@ async def test_access_matrix(make_client, engine, alice, method, path, body, min
             await conn.execute(text("SELECT title FROM boards WHERE id = :b"), {"b": board})
         ).scalar()
         cards = (await conn.execute(text("SELECT count(*) FROM cards"))).scalar_one()
+        carol_member = (
+            await conn.execute(
+                text("SELECT count(*) FROM board_members WHERE board_id = :b AND user_id = :u"),
+                {"b": board, "u": carol},
+            )
+        ).scalar_one()
     if expected is not None:
         assert title == "A's board"  # nothing changed
         assert cards == 0
+        assert carol_member == (1 if method == "DELETE" and "{user_id}" in path else 0)
 
 
 async def test_stranger_does_not_see_board_in_list(make_client, engine, alice):

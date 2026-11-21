@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vwkanban.auth.deps import CurrentUser, Db
 from vwkanban.auth.models import User
@@ -21,7 +22,8 @@ class Membership:
     role: str
 
 
-async def require_member(board_id: uuid.UUID, user: CurrentUser, db: Db) -> Membership:
+async def load_membership(db: AsyncSession, board_id: uuid.UUID, user: User) -> Membership | None:
+    """`user`'s membership of the board, or None (no such board, or not a member)."""
     row = (
         await db.execute(
             select(Board, BoardMember.role)
@@ -29,9 +31,24 @@ async def require_member(board_id: uuid.UUID, user: CurrentUser, db: Db) -> Memb
             .where(Board.id == board_id, BoardMember.user_id == user.id)
         )
     ).first()
-    if row is None:
+    return None if row is None else Membership(board=row[0], user=user, role=row[1])
+
+
+async def is_member(db: AsyncSession, board_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """A cheap membership check (one indexed row, no board load), for every op."""
+    found = await db.scalar(
+        select(BoardMember.role).where(
+            BoardMember.board_id == board_id, BoardMember.user_id == user_id
+        )
+    )
+    return found is not None
+
+
+async def require_member(board_id: uuid.UUID, user: CurrentUser, db: Db) -> Membership:
+    member = await load_membership(db, board_id, user)
+    if member is None:
         raise ApiError(404, "not_found", "board not found")
-    return Membership(board=row[0], user=user, role=row[1])
+    return member
 
 
 Member = Annotated[Membership, Depends(require_member)]

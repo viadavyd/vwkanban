@@ -1,5 +1,5 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
-import { card, column, expectSelected, expectTitles, opDone, STATE } from "./helpers";
+import { expect, test, type Page } from "@playwright/test";
+import { card, column, expectSelected, expectTitles, settled, STATE } from "./helpers";
 
 // Keyboard only (no clicks, no fill()): every M3a board key on a fresh board.
 test.use({ storageState: STATE });
@@ -86,38 +86,36 @@ test("keyboard-only board: a A j k h l Space d ? Esc", async ({ page }) => {
   await expect(card(page, "three").getByTestId("card-meta")).toHaveText("#2");
 
   // Space toggles done; it survives a reload.
-  const toggled = opDone(page, "card.update");
   await page.keyboard.press("Space");
   const done = card(page, "one").getByRole("checkbox");
   await expect(done).toHaveAttribute("aria-checked", "true");
-  expect((await toggled).status()).toBe(200);
+  await settled(page);
   await page.reload();
+  await settled(page);
   await expect(card(page, "one").getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
   await expectSelected(page, "first"); // a fresh load selects the first card
 
   // Space again: back to not done.
   await page.keyboard.press("j");
-  const untoggled = opDone(page, "card.update");
   await page.keyboard.press("Space");
   await expect(card(page, "one").getByRole("checkbox")).toHaveAttribute("aria-checked", "false");
-  expect((await untoggled).status()).toBe(200);
+  await settled(page);
   await page.keyboard.press("Space");
   await expect(card(page, "one").getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
 
   // d deletes; the selection moves to the next card, else the previous one.
   await page.keyboard.press("k");
-  const deleted = opDone(page, "card.delete");
   await page.keyboard.press("d");
   await expect(card(page, "first")).toHaveCount(0);
   await expectSelected(page, "one");
-  expect((await deleted).status()).toBe(200);
+  await settled(page);
   await page.keyboard.press("j");
   await page.keyboard.press("j");
-  const last: Promise<Response> = opDone(page, "card.delete");
   await page.keyboard.press("d");
   await expectSelected(page, "two");
-  expect((await last).status()).toBe(200);
+  await settled(page);
   await page.reload();
+  await settled(page);
   await expectTitles(page, "Todo", ["one", "two"]);
 
   // Help lists the board keys; Esc closes only the help.

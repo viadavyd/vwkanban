@@ -21,11 +21,14 @@
   let {
     user,
     initialSelected,
+    notice = "",
     onopen,
     onloggedout,
   }: {
     user: User;
     initialSelected?: string;
+    /** Why we came back from a board, if it wasn't the user's choice. */
+    notice?: string;
     onopen: (id: string) => void;
     /** Logged out by the user, or the session is gone (401). */
     onloggedout: () => void;
@@ -45,7 +48,8 @@
   // svelte-ignore state_referenced_locally (only the first value matters)
   let selectedId = $state<string | undefined>(initialSelected);
   let overlay = $state<Overlay | null>(null);
-  let message = $state("");
+  // svelte-ignore state_referenced_locally (shown once, cleared by the next key)
+  let message = $state(notice);
   let now = $state(Date.now());
   let grid: HTMLElement | undefined = $state();
 
