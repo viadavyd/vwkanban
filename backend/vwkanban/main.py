@@ -10,6 +10,7 @@ from vwkanban.auth.bootstrap import ensure_admin
 from vwkanban.auth.origin import check_origin
 from vwkanban.auth.routes import router as auth_router
 from vwkanban.auth.sessions import purge_expired
+from vwkanban.boards.members import router as members_router
 from vwkanban.boards.routes import router as boards_router
 from vwkanban.config import Settings, get_settings
 from vwkanban.db import make_engine, make_sessionmaker
@@ -42,6 +43,7 @@ def build_api_router() -> APIRouter:
     api.include_router(health)
     api.include_router(auth_router)
     api.include_router(boards_router)
+    api.include_router(members_router)
     api.include_router(sync_router)
     return api
 
