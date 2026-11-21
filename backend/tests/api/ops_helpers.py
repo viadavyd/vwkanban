@@ -10,13 +10,16 @@ async def login_as(c, username: str) -> None:
     assert r.status_code == 200, r.text
 
 
-def op_body(kind: str, data: dict, *, client_id=None, op_id=None, base_seq: int = 0) -> dict:
+def op_body(
+    kind: str, data: dict, *, client_id=None, op_id=None, base_seq: int = 0, undo: bool = False
+) -> dict:
     return {
         "client_id": str(client_id or uuid7()),
         "op": {
             "op_id": str(op_id or uuid7()),
             "kind": kind,
             "base_seq": base_seq,
+            **({"undo": True} if undo else {}),
             "data": {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in data.items()},
         },
     }
