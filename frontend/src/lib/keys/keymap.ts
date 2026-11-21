@@ -3,8 +3,9 @@
 //
 // Modes stack: a screen mode (dashboard, board) with overlays on top (help, prompt,
 // confirm). Esc / Ctrl+C always go back exactly one level; the dashboard is the top level.
+// `column` is the board's `s` prefix (plan §4.3: the only prefix, no timeout, Esc cancels).
 
-export type Mode = "dashboard" | "board" | "help" | "prompt" | "confirm";
+export type Mode = "dashboard" | "board" | "column" | "help" | "prompt" | "confirm";
 
 export type Action =
   | "left"
@@ -15,6 +16,14 @@ export type Action =
   | "create"
   | "createAbove"
   | "toggleDone"
+  | "copy"
+  | "paste"
+  | "mark"
+  | "undo"
+  | "columnPrefix"
+  | "columnLeft"
+  | "columnRight"
+  | "cycleColor"
   | "rename"
   | "delete"
   | "logout"
@@ -35,6 +44,7 @@ export interface Binding {
 export const MODE_LABEL: Record<Mode, string> = {
   dashboard: "Dashboard",
   board: "Board",
+  column: "Columns (after s)",
   help: "Help",
   prompt: "Prompt",
   confirm: "Confirm",
@@ -53,17 +63,46 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "dashboard", keys: ["Q"], action: "logout", help: "log out" },
   { mode: "dashboard", keys: ["?"], action: "help", help: "show this help" },
 
-  // Board (M3a; y p x u i, column keys and H L arrive in M3b and M5)
+  // Board (i and card mode arrive in M5)
   { mode: "board", keys: ["h"], action: "left", help: "previous column" },
   { mode: "board", keys: ["j"], action: "down", help: "next card in the column" },
   { mode: "board", keys: ["k"], action: "up", help: "previous card in the column" },
   { mode: "board", keys: ["l"], action: "right", help: "next column" },
   { mode: "board", keys: ["a"], action: "create", help: "new card below the selection" },
   { mode: "board", keys: ["A"], action: "createAbove", help: "new card above the selection" },
-  { mode: "board", keys: ["d"], action: "delete", help: "delete the card (with its children)" },
+  {
+    mode: "board",
+    keys: ["d"],
+    action: "delete",
+    help: "delete the card (with its children); it goes into the register",
+  },
   { mode: "board", keys: ["Space"], action: "toggleDone", help: "toggle done" },
-  { mode: "board", keys: ["Esc", "C-c"], action: "back", help: "back to the dashboard" },
+  { mode: "board", keys: ["y"], action: "copy", help: "copy the card (with its children)" },
+  { mode: "board", keys: ["x"], action: "mark", help: "mark the card to move (then p)" },
+  {
+    mode: "board",
+    keys: ["p"],
+    action: "paste",
+    help: "paste below: a copy, or move the marked card here",
+  },
+  { mode: "board", keys: ["u"], action: "undo", help: "undo your last change" },
+  { mode: "board", keys: ["s"], action: "columnPrefix", help: "column commands (below)" },
+  { mode: "board", keys: ["H"], action: "columnLeft", help: "move the column left" },
+  { mode: "board", keys: ["L"], action: "columnRight", help: "move the column right" },
+  {
+    mode: "board",
+    keys: ["Esc", "C-c"],
+    action: "back",
+    help: "clear the x-mark, else back to the dashboard",
+  },
   { mode: "board", keys: ["?"], action: "help", help: "show this help" },
+
+  // Column commands: `s` then one of these
+  { mode: "column", keys: ["a"], action: "create", help: "new column to the right" },
+  { mode: "column", keys: ["r"], action: "rename", help: "rename the column" },
+  { mode: "column", keys: ["c"], action: "cycleColor", help: "next column colour" },
+  { mode: "column", keys: ["d"], action: "delete", help: "delete the column (only if empty)" },
+  { mode: "column", keys: ["Esc", "C-c"], action: "back", help: "cancel" },
 
   // Overlays
   { mode: "help", keys: ["Esc", "C-c", "?"], action: "back", help: "close help" },
@@ -72,6 +111,12 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "confirm", keys: ["y"], action: "yes", help: "yes" },
   { mode: "confirm", keys: ["n", "Esc", "C-c"], action: "no", help: "no, cancel" },
 ];
+
+/** Key typed before a mode's keys (shown in help as "s a"). */
+export const PREFIX: Partial<Record<Mode, string>> = { column: "s" };
+
+/** Modes whose help is shown along with a screen's own (the screen's prefixes). */
+export const SUBMODES: Partial<Record<Mode, Mode[]>> = { board: ["column"] };
 
 /** Modes whose keys also work while focus is in a text input (the input is the prompt). */
 export const INPUT_MODES: ReadonlySet<Mode> = new Set(["prompt"]);

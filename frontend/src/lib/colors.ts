@@ -14,7 +14,13 @@ export const PALETTE = {
 
 export type ColorName = keyof typeof PALETTE;
 
-const NAMES = Object.keys(PALETTE) as ColorName[];
+export const COLOR_NAMES = Object.keys(PALETTE) as ColorName[];
+const NAMES = COLOR_NAMES;
+
+/** The colour after `name` in palette order (`s c` cycles through them). */
+export function nextColor(name: string): ColorName {
+  return COLOR_NAMES[(COLOR_NAMES.indexOf(name as ColorName) + 1) % COLOR_NAMES.length];
+}
 
 export function colorOf(name: string): string {
   return PALETTE[name as ColorName] ?? PALETTE.gray;

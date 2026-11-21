@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveCursor, rowAfterDelete } from "../src/lib/keys/board";
+import { columnMove, columnNameError, moveCursor, rowAfterDelete } from "../src/lib/keys/board";
 
 describe("board cursor", () => {
   const lengths = [3, 0, 5];
@@ -29,5 +29,29 @@ describe("board cursor", () => {
     expect(rowAfterDelete(1, 3)).toBe(1);
     expect(rowAfterDelete(2, 3)).toBe(1);
     expect(rowAfterDelete(0, 1)).toBe(-1);
+  });
+});
+
+describe("column helpers", () => {
+  const ids = ["a", "b", "c"];
+
+  it("moves a column past its neighbour, not past the edges", () => {
+    expect(columnMove(ids, 1, "left")).toEqual({ to: 0, before_id: "a" });
+    expect(columnMove(ids, 1, "right")).toEqual({ to: 2, after_id: "c" });
+    expect(columnMove(ids, 0, "left")).toBeNull();
+    expect(columnMove(ids, 2, "right")).toBeNull();
+    expect(columnMove([], -1, "right")).toBeNull();
+  });
+
+  it("checks column names like the server", () => {
+    const cols = [
+      { id: "a", name: "Todo" },
+      { id: "b", name: "Doing" },
+    ];
+    expect(columnNameError("  ", cols)).toBe("a name is required");
+    expect(columnNameError("x".repeat(41), cols)).toMatch(/at most 40/);
+    expect(columnNameError("todo", cols)).toBe('a column named "Todo" already exists');
+    expect(columnNameError("TODO", cols, "a")).toBeNull(); // renaming itself
+    expect(columnNameError("Review", cols)).toBeNull();
   });
 });

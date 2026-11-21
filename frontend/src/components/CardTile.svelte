@@ -8,6 +8,7 @@
   let {
     card,
     selected,
+    marked = false,
     pending = false,
     children,
     onselect,
@@ -15,6 +16,7 @@
   }: {
     card: Card;
     selected: boolean;
+    marked?: boolean;
     pending?: boolean;
     children?: ChildCount;
     onselect: (id: string) => void;
@@ -39,6 +41,7 @@
   class:selected
   class:done={card.is_done}
   class:pending
+  class:marked
   role="option"
   aria-selected={selected}
   tabindex="-1"
@@ -87,6 +90,9 @@
   .tile.selected {
     outline: 3px solid #222;
     outline-offset: 2px;
+  }
+  .tile.marked {
+    opacity: 0.45;
   }
   .tile.pending {
     border-style: dashed;

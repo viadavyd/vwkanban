@@ -12,8 +12,7 @@ export type Snapshot = Required<Omit<ChildData, "id">> & {
   children: Required<Omit<ChildData, "id">>[];
 };
 
-export type Register =
-  { kind: "copy"; snapshot: Snapshot } | { kind: "move"; id: string; number: number } | null;
+export type Register = { kind: "copy"; snapshot: Snapshot } | { kind: "move"; id: string } | null;
 
 const content = (c: Card) => ({
   title: c.title,

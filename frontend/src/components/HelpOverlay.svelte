@@ -1,11 +1,21 @@
 <script lang="ts">
   // Rendered from keymap.ts, so help can't drift from the real bindings.
   import { pushMode } from "../lib/keys/dispatch";
-  import { bindingsFor, displayKey, MODE_LABEL, type Mode } from "../lib/keys/keymap";
+  import {
+    bindingsFor,
+    displayKey,
+    MODE_LABEL,
+    PREFIX,
+    SUBMODES,
+    type Mode,
+  } from "../lib/keys/keymap";
 
   let { mode, onclose }: { mode: Mode; onclose: () => void } = $props();
 
-  const sections = $derived([mode, "help"] as Mode[]);
+  const sections = $derived([mode, ...(SUBMODES[mode] ?? []), "help"] as Mode[]);
+  // A prefix mode's keys read as "s a"; its Esc is shown as is.
+  const shown = (m: Mode, k: string) =>
+    PREFIX[m] && k !== "Esc" && k !== "C-c" ? `${PREFIX[m]} ${k}` : displayKey(k);
 
   $effect(() => pushMode("help", () => onclose()));
 </script>
@@ -21,7 +31,7 @@
               <td class="keys">
                 {#each b.keys as k, i (k)}{#if i > 0}
                     /
-                  {/if}<kbd>{displayKey(k)}</kbd>{/each}
+                  {/if}<kbd>{shown(m, k)}</kbd>{/each}
               </td>
               <td>{b.help}</td>
             </tr>
