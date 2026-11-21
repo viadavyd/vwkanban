@@ -142,6 +142,9 @@ async def run(url: str, project: str, env: dict[str, str]) -> dict:
     samples: list[float] = []
 
     async def send_ops(ws):
+        # Only once every client has its welcome: a socket that joins later (hello with
+        # last_seq 0) gets no replay and would miss the first events.
+        await asyncio.gather(*(r.wait() for r in readies))
         done: dict[str, bool] = {}
         for i in range(OPS_PER_SECOND * SECONDS):
             card = cards[i % CARDS]
