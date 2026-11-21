@@ -23,17 +23,19 @@ frontend/src/{lib/{api,sync,keys,editor},routes,components}, frontend/{tests,e2e
 ## Commands
 - Run all: `cp .env.example .env && docker compose up -d` (build locally: `docker compose up -d --build`)
 - Local Postgres for backend dev/tests: `scripts/dev-db.sh` (throwaway container on 127.0.0.1:5432; tests read `DATABASE_URL`, defaulting to it)
-- Backend dev: `cd backend && uv sync && DATABASE_URL=postgresql+asyncpg://vwkanban:vwkanban@127.0.0.1:5432/vwkanban uv run uvicorn vwkanban.main:app --reload`
+- Backend dev: `cd backend && uv sync && DATABASE_URL=postgresql+asyncpg://vwkanban:vwkanban@127.0.0.1:5432/vwkanban PUBLIC_URL=http://localhost:5173 uv run uvicorn vwkanban.main:app --reload` (`PUBLIC_URL` must be the origin the browser uses: state-changing requests are Origin-checked)
 - Frontend dev (Node 22): `cd frontend && npm ci && npm run dev` (proxies /api to :8000)
-- Test: `cd backend && uv run pytest` · `cd frontend && npm test && npx playwright test` (one-time: `npx playwright install chromium`; until M5 Playwright runs only the vim spike, `e2e/spike.spec.ts`)
+- Test: `cd backend && uv run pytest` (migrates the test DB itself) · `cd frontend && npm test && npx playwright test` (one-time: `npx playwright install chromium`; this runs the vim spike, `e2e/spike.spec.ts`)
+- App e2e (against a running stack; `VWK_BASE_URL` must equal its `PUBLIC_URL`): `cd frontend && VWK_BASE_URL=http://localhost ADMIN_USERNAME=admin ADMIN_PASSWORD=... npm run e2e:app` (`e2e/app/`; login is rate-limited to 5/min per IP)
 - Perf (from M7): `make perf` (enforced on the reference machine; report-only in CI)
 - Lint/format: `uv run ruff check --fix . && uv run ruff format .` · `npm run check && npm run format` · `pre-commit run -a` (one-time: `uv tool install pre-commit`; run `npm ci` first, the prettier hook uses `frontend/node_modules`)
 - Migrate: `uv run alembic revision --autogenerate -m "..."` then `uv run alembic upgrade head` (the app container runs `upgrade head` on start)
-- Users (from M1): `docker compose exec app vwk user create <name>`
+- Users: `docker compose exec app vwk user create|passwd <name>` · `vwk user list` (the first admin comes from `ADMIN_USERNAME`/`ADMIN_PASSWORD` when no users exist)
 
 ## Conventions
 - Every board mutation goes through `apply_op`; never write cards/statuses from a route directly.
 - Every written card field updates `cards.field_meta` ({seq, client}); conflict and undo checks read it, never the event log.
+- API errors are `{error: {code, message}}` (raise `vwkanban.errors.ApiError`). Every state-changing `/api` request must send an `Origin` equal to `PUBLIC_URL`'s (`auth/origin.py`); the WS handshake reuses `origin_allowed`.
 - Every route/op touching a board uses the `require_member` dependency; the parametrized access-matrix test must cover new routes.
 - Keys live only in `frontend/src/lib/keys/keymap.ts` with help text; the help overlay and the uniqueness test read from it. `Esc`/`Ctrl+C` always go back exactly one level (board → dashboard included).
 - Blocking work (argon2, CSV parsing of large files) runs in a thread pool, never on the event loop.
