@@ -70,7 +70,9 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
-      # Temporary (M0 vim spike); replaced by the real e2e suite in M5.
+      # Plan §7 initial JS (< 80 KB gz, editor lazy); report-only on shared runners.
+      - run: npm run size
+      # The M0 vim spike page (e2e/spike.spec.ts); the app e2e runs in the smoke job.
       - run: npx playwright install --with-deps chromium
       - run: npm run spike:e2e
 
@@ -78,6 +80,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
+      # Plan §7 cold deploy, as the README does it (pulled images, fresh .env, login over
+      # plain HTTP); the script removes its stack and .env when it is done.
+      - name: Cold deploy check (scripts/deploy-check.sh)
+        run: scripts/deploy-check.sh
       - name: Configure .env with a non-localhost hostname
         run: |
           cp .env.example .env
