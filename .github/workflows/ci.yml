@@ -129,12 +129,12 @@ jobs:
           node-version: "22.23.5"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: E2E keyboard-only login
+      - name: App e2e (keyboard only; vim specs also in Firefox)
         working-directory: frontend
         run: |
           set -eu
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium firefox
           set -a; . ../.env; set +a
           VWK_BASE_URL=http://vwk.test npm run e2e:app
       - name: Login rate limit returns 429
