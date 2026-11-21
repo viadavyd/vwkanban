@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "e2e",
+  // e2e/app runs against a live stack via playwright.app.config.ts.
+  testIgnore: "app/**",
   reporter: [["list"]],
   use: { baseURL: "http://127.0.0.1:4173" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

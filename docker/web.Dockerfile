@@ -7,5 +7,6 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM nginx:1.27.5-alpine
+LABEL org.opencontainers.image.source=https://github.com/viadavyd/vwkanban
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
