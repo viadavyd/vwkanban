@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { ADMIN, BOB, BOB_STATE, expectTitles, seedBoard, settled, STATE } from "./helpers";
 
 // M6: CSV export (E) and import (I: file picker, preview, y) through the real stack
-// (nginx in front). Keyboard only, except the OS file picker, which Playwright answers.
+// (nginx in front). Keyboard only; the test sets the file on the hidden input after `I`.
 // Every wait is a web-first assertion or settled(); nothing sleeps.
 
 test.use({ storageState: STATE });
@@ -38,11 +38,14 @@ async function exportBytes(page: Page): Promise<Buffer> {
   return readFile(await file.path());
 }
 
-/** `I` with this file: waits for the preview (or a refusal message). */
+/** `I`, then this file on the hidden input. `I` clears the input and opens the picker
+ * synchronously in its keydown, so the file set after the press is the one `change`
+ * reads. (Waiting for the "filechooser" event instead timed out in ~1 of 10 runs.) */
 async function pickFile(page: Page, body: string | Buffer, name = "cards.csv") {
-  const chooser = page.waitForEvent("filechooser");
   await page.keyboard.press("I");
-  await (await chooser).setFiles({ name, mimeType: "text/csv", buffer: Buffer.from(body) });
+  await page
+    .getByTestId("csv-file")
+    .setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(body) });
 }
 
 test("import a file, then export it back byte for byte", async ({ page, request }) => {
