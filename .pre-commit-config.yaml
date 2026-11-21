@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (frontend, pinned project version)
+        entry: scripts/prettier-hook.sh
+        language: system
+        files: ^frontend/
+      - id: no-dotenv
+        name: block committing .env files
+        entry: "sh -c 'echo \"Refusing to commit .env file(s): $*\" >&2; exit 1' --"
+        language: system
+        files: (^|/)\.env(\..+)?$
+        exclude: (^|/)\.env\.example$
