@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Response } from "@playwright/test";
-import { card, column, expectSelected, opDone, STATE, titles } from "./helpers";
+import { card, column, expectSelected, expectTitles, opDone, STATE } from "./helpers";
 
 // Keyboard only (no clicks, no fill()): every M3a board key on a fresh board.
 test.use({ storageState: STATE });
@@ -51,7 +51,7 @@ test("keyboard-only board: a A j k h l Space d ? Esc", async ({ page }) => {
   await newCard(page, "a", "two");
   await page.keyboard.press("k");
   await newCard(page, "A", "first");
-  expect(await titles(page, "Todo")).toEqual(["first", "one", "two", "three"]);
+  await expectTitles(page, "Todo", ["first", "one", "two", "three"]);
   await expect(column(page, "Todo").getByTestId("column-count")).toHaveText("4");
 
   // j / k within the column, stopping at the ends.
@@ -118,7 +118,7 @@ test("keyboard-only board: a A j k h l Space d ? Esc", async ({ page }) => {
   await expectSelected(page, "two");
   expect((await last).status()).toBe(200);
   await page.reload();
-  expect(await titles(page, "Todo")).toEqual(["one", "two"]);
+  await expectTitles(page, "Todo", ["one", "two"]);
 
   // Help lists the board keys; Esc closes only the help.
   await page.keyboard.press("?");
