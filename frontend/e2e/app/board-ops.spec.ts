@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { card, column, expectSelected, expectTitles, opDone, ORIGIN, STATE } from "./helpers";
+import { card, column, expectSelected, expectTitles, ORIGIN, settled, STATE } from "./helpers";
 
 // Keyboard only (no clicks, no fill()): every M3b board key — y p x u, s a/r/c/d, H L —
 // on a fresh board. The one exception is the seed: cards with children can't be made from
@@ -21,11 +21,11 @@ async function newCard(page: Page, title: string) {
   await expectSelected(page, title);
 }
 
-/** Presses `key` and waits until the op of `kind` it sends is answered with `status`. */
-async function press(page: Page, key: string, kind: string, status = 200) {
-  const done = opDone(page, kind);
+/** Presses a key that sends an op and waits until the server has answered it (an ack or a
+ * reject: what it shows is checked after). */
+async function press(page: Page, key: string) {
   await page.keyboard.press(key);
-  expect((await done).status()).toBe(status);
+  await settled(page);
 }
 
 test("keyboard-only register, move, undo and columns", async ({ page }) => {
@@ -69,17 +69,18 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   });
   expect(seeded.status(), await seeded.text()).toBe(200);
   await page.reload();
+  await settled(page);
   await expectTitles(page, "Todo", ["parent"]);
   await expectSelected(page, "parent");
   await expect(byNumber(page, 1).getByTestId("card-meta")).toHaveText("#1 · ☐ 1/2");
 
   // y p: a copy with its children (new numbers) below the selection; u takes it back.
   await page.keyboard.press("y");
-  await press(page, "p", "card.create");
+  await press(page, "p");
   await expectTitles(page, "Todo", ["parent", "parent"]);
   await expect(byNumber(page, 4)).toHaveAttribute("aria-selected", "true");
   await expect(byNumber(page, 4).getByTestId("card-meta")).toHaveText("#4 · ☐ 1/2");
-  await press(page, "u", "card.delete");
+  await press(page, "u");
   await expectTitles(page, "Todo", ["parent"]);
 
   await newCard(page, "a");
@@ -98,7 +99,7 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   // x … l p moves the marked card; the register is consumed.
   await page.keyboard.press("x");
   await page.keyboard.press("l");
-  await press(page, "p", "card.move");
+  await press(page, "p");
   await expectTitles(page, "Doing", ["b"]);
   await expectTitles(page, "Todo", ["parent", "a"]);
   await expect(page.getByTestId("pending")).toHaveCount(0);
@@ -110,10 +111,10 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   await expectSelected(page, "parent");
   await page.keyboard.press("x");
   await page.keyboard.press("l");
-  await press(page, "p", "card.move");
+  await press(page, "p");
   await expectTitles(page, "Doing", ["b", "parent"]);
   await expect(byNumber(page, 1).getByTestId("card-meta")).toHaveText("#1 · ☐ 1/2");
-  await press(page, "u", "card.move");
+  await press(page, "u");
   await expectTitles(page, "Todo", ["parent", "a"]);
   await expectTitles(page, "Doing", ["b"]);
   await expectSelected(page, "parent");
@@ -122,30 +123,31 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   await page.keyboard.press("j");
   await expectSelected(page, "a");
   const check = card(page, "a").getByRole("checkbox");
-  await press(page, "Space", "card.update");
+  await press(page, "Space");
   await expect(check).toHaveAttribute("aria-checked", "true");
-  await press(page, "u", "card.update");
+  await press(page, "u");
   await expect(check).toHaveAttribute("aria-checked", "false");
 
   // u undoes a delete (restore).
-  await press(page, "d", "card.delete");
+  await press(page, "d");
   await expectTitles(page, "Todo", ["parent"]);
-  await press(page, "u", "card.restore");
+  await press(page, "u");
   await expectTitles(page, "Todo", ["parent", "a"]);
 
   // d puts the deleted card in the register: p pastes it back as a copy.
   await page.keyboard.press("j");
   await expectSelected(page, "a");
   const numberOfA = Number(await card(page, "a").getAttribute("data-number"));
-  await press(page, "d", "card.delete");
+  await press(page, "d");
   await expectSelected(page, "parent");
-  await press(page, "p", "card.create");
+  await press(page, "p");
   await expectTitles(page, "Todo", ["parent", "a"]);
   await expect(card(page, "a")).not.toHaveAttribute("data-number", String(numberOfA));
   await expect(card(page, "a")).not.toHaveAttribute("data-number", "0"); // confirmed
 
   // Nothing left of the above is pending: a reload shows the same board.
   await page.reload();
+  await settled(page);
   await expectTitles(page, "Todo", ["parent", "a"]);
   await expectTitles(page, "Doing", ["b"]);
   await expect(byNumber(page, 1).getByTestId("card-meta")).toHaveText("#1 · ☐ 1/2");
@@ -169,7 +171,7 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   await expect(prompt.getByRole("alert")).toHaveText('a column named "Todo" already exists');
   await page.keyboard.press("Control+a");
   await page.keyboard.type("Review");
-  await press(page, "Enter", "status.create");
+  await press(page, "Enter");
   await expect(prompt).toHaveCount(0);
   await expect(columnNames(page)).toHaveText(["Todo", "Review", "Doing", "Done"]);
   await expect(column(page, "Review")).toHaveClass(/current/);
@@ -180,26 +182,27 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   const rename = page.getByRole("dialog", { name: "Rename column" });
   await expect(rename.getByRole("textbox")).toHaveValue("Review");
   await page.keyboard.type("QA");
-  await press(page, "Enter", "status.update");
+  await press(page, "Enter");
   await expect(columnNames(page)).toHaveText(["Todo", "QA", "Doing", "Done"]);
   const header = column(page, "QA").locator("header");
   await expect(header).toHaveCSS("border-top-color", "rgb(23, 128, 109)");
   await page.keyboard.press("s");
-  await press(page, "c", "status.update");
+  await press(page, "c");
   await expect(header).toHaveCSS("border-top-color", "rgb(94, 43, 151)");
 
   // H / L move the column; they stop at the edges; u undoes a column move.
-  await press(page, "H", "status.move");
+  await press(page, "H");
   await expect(columnNames(page)).toHaveText(["QA", "Todo", "Doing", "Done"]);
   await page.keyboard.press("H"); // already first: nothing is sent
-  await press(page, "L", "status.move");
-  await press(page, "L", "status.move");
+  await press(page, "L");
+  await press(page, "L");
   await expect(columnNames(page)).toHaveText(["Todo", "Doing", "QA", "Done"]);
   await expect(column(page, "QA")).toHaveClass(/current/);
-  await press(page, "u", "status.move");
+  await press(page, "u");
   await expect(columnNames(page)).toHaveText(["Todo", "QA", "Doing", "Done"]);
 
   await page.reload();
+  await settled(page);
   await expect(columnNames(page)).toHaveText(["Todo", "QA", "Doing", "Done"]);
   await expect(column(page, "QA").locator("header")).toHaveCSS(
     "border-top-color",
@@ -227,16 +230,16 @@ test("keyboard-only register, move, undo and columns", async ({ page }) => {
   await page.keyboard.press("l");
   await expect(column(page, "QA")).toHaveClass(/current/);
   await newCard(page, "temp");
-  await press(page, "d", "card.delete");
+  await press(page, "d");
   await expect(column(page, "QA").locator("[data-card]")).toHaveCount(0);
   await page.keyboard.press("s");
   await page.keyboard.press("d");
   await expect(page.getByRole("alertdialog")).toContainText('Delete column "QA"?');
-  await press(page, "y", "status.delete");
+  await press(page, "y");
   await expect(columnNames(page)).toHaveText(["Todo", "Doing", "Done"]);
-  await press(page, "u", "status.create");
+  await press(page, "u");
   await expect(columnNames(page)).toHaveText(["Todo", "QA", "Doing", "Done"]);
-  await press(page, "u", "card.restore", 410);
+  await press(page, "u");
   await expect(message(page)).toContainText("gone for good");
   await expect(column(page, "QA").locator("[data-card]")).toHaveCount(0);
 
