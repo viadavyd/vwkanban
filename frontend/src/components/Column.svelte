@@ -1,6 +1,6 @@
 <script lang="ts">
   // A board column per board.png: header boxed in the status colour (name + count), then
-  // the cards. `draftAt` is where the new-card placeholder sits (a/A), if any.
+  // the cards. `draftAt` is where the new-card placeholder (`newCard`) sits (a/A), if any.
   import type { Snippet } from "svelte";
   import type { Card, Status } from "../lib/api/boards";
   import { colorOf } from "../lib/colors";
@@ -15,7 +15,7 @@
     children,
     pending,
     draftAt = null,
-    draft,
+    newCard,
     onselect,
     ontoggle,
   }: {
@@ -27,7 +27,7 @@
     children: Map<string, ChildCount>;
     pending: Set<string>;
     draftAt?: number | null;
-    draft?: Snippet;
+    newCard?: Snippet;
     onselect: (id: string) => void;
     ontoggle: (id: string) => void;
   } = $props();
@@ -46,7 +46,7 @@
   </header>
   <div class="cards" role="listbox" aria-label={`${status.name} cards`}>
     {#each cards as card, i (card.id)}
-      {#if draftAt === i}{@render draft?.()}{/if}
+      {#if draftAt === i}{@render newCard?.()}{/if}
       <CardTile
         {card}
         selected={card.id === selectedId}
@@ -56,7 +56,7 @@
         {ontoggle}
       />
     {/each}
-    {#if draftAt !== null && draftAt >= cards.length}{@render draft?.()}{/if}
+    {#if draftAt !== null && draftAt >= cards.length}{@render newCard?.()}{/if}
   </div>
 </section>
 

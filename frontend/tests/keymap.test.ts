@@ -61,7 +61,9 @@ describe("keymap", () => {
 
   it("binds the M3a board keys", () => {
     const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
-    expect(keys.sort()).toEqual(["?", "C-c", "Esc", "h", "j", "k", "l"].sort());
+    expect(keys.sort()).toEqual(
+      ["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l"].sort(),
+    );
   });
 
   it("names keys", () => {

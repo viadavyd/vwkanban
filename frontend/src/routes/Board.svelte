@@ -3,14 +3,15 @@
   // keyboard-first (keys in keymap.ts, board mode).
   import Column from "../components/Column.svelte";
   import HelpOverlay from "../components/HelpOverlay.svelte";
+  import NewCardTile from "../components/NewCardTile.svelte";
   import TopBar from "../components/TopBar.svelte";
   import type { User } from "../lib/api/auth";
   import { getBoard, type BoardDetail } from "../lib/api/boards";
   import { ApiError } from "../lib/api/client";
-  import { clampRow, moveCursor } from "../lib/keys/board";
+  import { clampRow, moveCursor, rowAfterDelete } from "../lib/keys/board";
   import { pushMode } from "../lib/keys/dispatch";
   import type { Action } from "../lib/keys/keymap";
-  import type { BoardView } from "../lib/sync/ops";
+  import { createCard, deleteCard, setDone, type BoardView } from "../lib/sync/ops";
   import { BoardStore } from "../lib/sync/store";
 
   let {
@@ -25,6 +26,9 @@
   // Raw: the view is rebuilt as a whole; unchanged cards keep their identity.
   let view = $state.raw<BoardView | null>(null);
   let overlay = $state<"help" | null>(null);
+  // The a/A placeholder: its column, its row, and the neighbour it goes next to.
+  let draft = $state<{ col: number; at: number; after?: string; before?: string } | null>(null);
+  const TITLE_MAX = 300;
   let message = $state("");
 
   // Selection: a column and a card in it (by id, so it survives inserts above it).
@@ -89,6 +93,42 @@
     want = view.columns.get(statuses[col].id)!.findIndex((c) => c.id === cardId);
   }
 
+  function openDraft(above: boolean) {
+    if (!statuses[selCol]) return;
+    if (!selectedId) draft = { col: selCol, at: 0 };
+    else if (above) draft = { col: selCol, at: selRow, before: selectedId };
+    else draft = { col: selCol, at: selRow + 1, after: selectedId };
+  }
+
+  function submitDraft(title: string) {
+    if (!draft || !store) return;
+    const { col, at, after, before } = draft;
+    draft = null;
+    const op = createCard(store.seq, {
+      status_id: statuses[col].id,
+      title,
+      ...(after && { after_id: after }),
+      ...(before && { before_id: before }),
+    });
+    store.submit(op);
+    selCol = col;
+    selId = op.data.id;
+    want = at;
+  }
+
+  function toggle(cardId: string) {
+    const card = view?.columns.get(statuses[selCol]?.id)?.find((c) => c.id === cardId);
+    if (card && store) store.submit(setDone(store.seq, card.id, !card.is_done));
+  }
+
+  function remove() {
+    if (!selectedId || !store) return;
+    const row = rowAfterDelete(selRow, colCards.length);
+    store.submit(deleteCard(store.seq, selectedId));
+    want = Math.max(row, 0);
+    select(selCol, row);
+  }
+
   function onkey(action: Action) {
     message = "";
     switch (action) {
@@ -97,6 +137,15 @@
       case "up":
       case "right":
         return move(action);
+      case "create":
+        return openDraft(false);
+      case "createAbove":
+        return openDraft(true);
+      case "toggleDone":
+        if (selectedId) toggle(selectedId);
+        return;
+      case "delete":
+        return remove();
       case "back":
         return onback();
       case "help":
@@ -137,9 +186,21 @@
           selectedId={i === selCol ? selectedId : null}
           children={view.children}
           pending={view.pending}
+          draftAt={draft?.col === i ? draft.at : null}
           onselect={selectCard}
-          ontoggle={() => {}}
-        />
+          ontoggle={(cardId) => {
+            selectCard(cardId);
+            toggle(cardId);
+          }}
+        >
+          {#snippet newCard()}
+            <NewCardTile
+              maxlength={TITLE_MAX}
+              onsubmit={submitDraft}
+              oncancel={() => (draft = null)}
+            />
+          {/snippet}
+        </Column>
       {/each}
     </div>
   {/if}
