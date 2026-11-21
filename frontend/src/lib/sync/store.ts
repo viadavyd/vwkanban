@@ -15,6 +15,9 @@
 // before it. `undo()` queues that inverse with `undo: true`; its `base_seq` is the seq the
 // original op got, so the inverse is held back until the original is acked (or dropped if
 // the original was rejected).
+//
+// `submit()` returns the server's answer for the op (ack or reject), so a card field can
+// move its frozen base_seq on its own ack and keep its draft on a reject.
 
 import type { BoardDetail, Card } from "../api/boards";
 import { ApiError } from "../api/client";
@@ -38,6 +41,10 @@ export const CLIENT_ID = uuid7();
 export const UNDO_DEPTH = 50;
 /** How long an out-of-order event waits for the gap before a resync (plan §3.4). */
 export const GAP_WAIT_MS = 1000;
+
+/** The server's answer to one op. */
+export type Answer =
+  { ok: true; seq: number } | { ok: false; code: string; message: string; current: Card | null };
 
 interface UndoEntry {
   /** op_id of the op this undoes */
@@ -101,6 +108,8 @@ export class BoardStore {
   /** Own ops whose event came before their ack (the usual order): kept until the ack, so
    * the undo bookkeeping gets the seq. */
   private answered = new Map<string, Op>();
+  /** op_id → who waits for its answer */
+  private waiters = new Map<string, (a: Answer) => void>();
   private readonly socket: Transport;
   view: BoardView;
 
@@ -132,8 +141,10 @@ export class BoardStore {
   }
 
   /** Applies `op` optimistically and queues it for the server. An undoable op can be
-   * undone later with `undo()`. */
-  submit(op: Op, { undoable = true }: { undoable?: boolean } = {}): void {
+   * undone later with `undo()`. Resolves with the server's answer (never, if the board
+   * closes first). */
+  submit(op: Op, { undoable = true }: { undoable?: boolean } = {}): Promise<Answer> {
+    const answer = this.answerOf(op.op_id);
     const inverse = undoable ? inverseOf(op, this.view) : null;
     if (inverse) {
       this.undoStack.push({ of: op.op_id, inverse });
@@ -143,13 +154,26 @@ export class BoardStore {
     this.pending.push(op);
     this.refresh();
     this.pump();
+    return answer;
+  }
+
+  private answerOf(opId: string): Promise<Answer> {
+    return new Promise((resolve) => this.waiters.set(opId, resolve));
+  }
+
+  private answer(opId: string, a: Answer): void {
+    this.waiters.get(opId)?.(a);
+    this.waiters.delete(opId);
   }
 
   /** Queues the inverse of the newest undoable op; returns the inverse, or null if there
-   * is nothing to undo. A teammate's newer change makes the server reject it. */
-  undo(): Op | null {
-    const entry = this.undoStack.pop();
-    if (!entry) return null;
+   * is nothing to undo. With `only`, the newest op is undone only if `only(inverse)`
+   * holds (card mode: an op on this card). A teammate's newer change makes the server
+   * reject it. */
+  undo(only?: (inverse: Op) => boolean): Op | null {
+    const top = this.undoStack.at(-1);
+    if (!top || (only && !only(top.inverse))) return null;
+    const entry = this.undoStack.pop()!;
     this.undoOf.set(entry.inverse.op_id, entry.of);
     this.pending.push(entry.inverse);
     this.refresh();
@@ -270,6 +294,7 @@ export class BoardStore {
       case "event":
         return this.event(m);
       case "ack": {
+        this.answer(m.op_id, { ok: true, seq: m.seq });
         const op = this.take(m.op_id);
         if (op) {
           // Its event was already folded into confirmed by a resync.
@@ -284,6 +309,8 @@ export class BoardStore {
         return;
       }
       case "reject": {
+        const current = (m.current as Card | null | undefined) ?? null;
+        this.answer(m.op_id, { ok: false, code: m.code, message: m.message, current });
         const op = this.take(m.op_id);
         if (!op) return;
         this.settled(op, null);

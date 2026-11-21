@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyEvent,
   buildView,
+  cardById,
   confirmedFrom,
   createCard,
+  createChild,
   createStatus,
   deleteCard,
   deleteStatus,
@@ -12,6 +14,7 @@ import {
   moveStatus,
   restoreCard,
   setDone,
+  updateCard,
   updateStatus,
   type BoardEvent,
   type Op,
@@ -258,5 +261,100 @@ describe("uuid7", () => {
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(a < b).toBe(true);
     expect(a.slice(0, 13)).toBe("018bcfe5-6800");
+  });
+});
+
+describe("M5 children and text fields", () => {
+  const kidIds = (v: ReturnType<typeof buildView>, parent = "c1") =>
+    (v.kids.get(parent) ?? []).map((c) => c.id);
+
+  it("lists children in position order and derives the badge from them", () => {
+    const v = buildView(state(), []);
+    expect(kidIds(v)).toEqual(["k1", "k2"]);
+    expect(cardById(v, "k2")?.parent_card_id).toBe("c1");
+    expect(cardById(v, "c3")?.id).toBe("c3");
+    expect(cardById(v, "nope")).toBeUndefined();
+  });
+
+  it("applies pending child creates, toggles, edits and deletes", () => {
+    const at = createChild(5, "c1", "between", { after_id: "k1" }, "k9");
+    const top = createChild(5, "c1", "first", { before_id: "k1" }, "k0");
+    const toggle = setDone(5, "k2", true);
+    const edit = updateCard(5, "k1", { title: "renamed" });
+    const v = buildView(state(), [at, top, toggle, edit]);
+    expect(kidIds(v)).toEqual(["k0", "k1", "k9", "k2"]);
+    expect(v.pending.has("k9")).toBe(true);
+    expect(cardById(v, "k9")).toMatchObject({ parent_card_id: "c1", status_id: null, number: 0 });
+    expect(cardById(v, "k1")?.title).toBe("renamed");
+    expect(v.children.get("c1")).toEqual({ done: 2, total: 4 });
+    expect(ids(v)).toEqual(["c1", "c2", "c3"]); // children never show in a column
+
+    const gone = buildView(state(), [deleteCard(5, "k1")]);
+    expect(kidIds(gone)).toEqual(["k2"]);
+    expect(gone.children.get("c1")).toEqual({ done: 0, total: 1 });
+    // The parent deleted: no badge, and a child create under it shows nothing.
+    const orphan = buildView(state(), [deleteCard(5, "c1"), createChild(5, "c1", "x", {}, "kx")]);
+    expect(orphan.kids.has("c1")).toBe(false);
+    expect(orphan.children.has("c1")).toBe(false);
+  });
+
+  it("applies text-field updates to top-level cards", () => {
+    const op = updateCard(5, "c2", {
+      title: "T",
+      description: "d",
+      tags: ["a", "b"],
+      date: "2026-12-01",
+    });
+    expect(cardById(buildView(state(), [op]), "c2")).toMatchObject({
+      title: "T",
+      description: "d",
+      tags: ["a", "b"],
+      date: "2026-12-01",
+    });
+  });
+
+  it("applies a child create event", () => {
+    const s = state();
+    const ev: BoardEvent = {
+      seq: 6,
+      op_id: "o",
+      client_id: "x",
+      actor: { id: "u", username: "u" },
+      kind: "card.create",
+      data: { card: card("k3", "a2", { status_id: null, parent_card_id: "c1" }) },
+    };
+    applyEvent(s, ev);
+    expect(kidIds(buildView(s, []))).toEqual(["k1", "k2", "k3"]);
+  });
+
+  it("inverts a text update to exactly the old values it touched", () => {
+    const s = confirmedFrom(
+      5,
+      [TODO],
+      [
+        card("c1", "a0", { title: "old", tags: ["x"], date: null, description: "keep" }),
+        card("k1", "a0", { status_id: null, parent_card_id: "c1", title: "kid" }),
+      ],
+    );
+    const v = buildView(s, []);
+    const inv = inverseOf(updateCard(5, "c1", { title: "new", tags: [], date: "2026-01-01" }), v);
+    expect(inv).toMatchObject({
+      kind: "card.update",
+      undo: true,
+      data: { id: "c1", fields: { title: "old", tags: ["x"], date: null } },
+    });
+    expect(Object.keys((inv as Extract<Op, { kind: "card.update" }>).data.fields)).toEqual([
+      "title",
+      "tags",
+      "date",
+    ]);
+    // Children: their own toggle and title.
+    expect(inverseOf(updateCard(5, "k1", { title: "K", is_done: true }), v)).toMatchObject({
+      data: { id: "k1", fields: { title: "kid", is_done: false } },
+    });
+    expect(inverseOf(createChild(5, "c1", "n", {}, "k5"), v)).toMatchObject({
+      kind: "card.delete",
+      data: { id: "k5" },
+    });
   });
 });
