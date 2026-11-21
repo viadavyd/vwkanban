@@ -12,6 +12,7 @@
   import Column from "../components/Column.svelte";
   import Confirm from "../components/Confirm.svelte";
   import HelpOverlay from "../components/HelpOverlay.svelte";
+  import MembersOverlay from "../components/MembersOverlay.svelte";
   import NewCardTile from "../components/NewCardTile.svelte";
   import Prompt from "../components/Prompt.svelte";
   import TopBar from "../components/TopBar.svelte";
@@ -66,6 +67,7 @@
 
   type Overlay =
     | { kind: "help" }
+    | { kind: "members" }
     | { kind: "columnCreate" }
     | { kind: "columnRename"; status: Status }
     | { kind: "columnDelete"; status: Status };
@@ -379,6 +381,9 @@
       case "help":
         overlay = { kind: "help" };
         return;
+      case "members":
+        overlay = { kind: "members" };
+        return;
     }
   }
 
@@ -465,6 +470,8 @@
 
 {#if overlay?.kind === "help"}
   <HelpOverlay mode="board" onclose={() => (overlay = null)} />
+{:else if overlay?.kind === "members"}
+  <MembersOverlay boardId={id} {user} onclose={() => (overlay = null)} {onloggedout} />
 {:else if overlay?.kind === "columnCreate"}
   <Prompt
     label="New column name"

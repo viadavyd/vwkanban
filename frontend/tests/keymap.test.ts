@@ -67,12 +67,13 @@ describe("keymap", () => {
     expect(keys.sort()).toEqual(["?", "Enter", "Q", "a", "d", "h", "j", "k", "l", "r"].sort());
   });
 
-  it("binds the M3a and M3b board keys", () => {
+  it("binds the M3a, M3b and M4 board keys", () => {
     const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(
       [
         ...["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l"],
         ...["y", "p", "x", "u", "s", "H", "L"],
+        "M",
       ].sort(),
     );
   });
@@ -80,9 +81,15 @@ describe("keymap", () => {
   it("binds the column commands under the s prefix", () => {
     expect(lookup("board", "s")).toBe("columnPrefix");
     expect(PREFIX.column).toBe("s");
-    expect(SUBMODES.board).toEqual(["column"]);
+    expect(SUBMODES.board).toEqual(["column", "members"]);
     const keys = KEYMAP.filter((b) => b.mode === "column").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(["C-c", "Esc", "a", "c", "d", "r"].sort());
+  });
+
+  it("binds the members overlay (M)", () => {
+    expect(lookup("board", "M")).toBe("members");
+    const keys = KEYMAP.filter((b) => b.mode === "members").flatMap((b) => b.keys);
+    expect(keys.sort()).toEqual(["C-c", "Esc", "a", "d", "j", "k"].sort());
   });
 
   it("names keys", () => {

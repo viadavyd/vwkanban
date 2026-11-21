@@ -65,3 +65,20 @@ export const renameBoard = (id: string, title: string) =>
 export const deleteBoard = (id: string) => request<void>("DELETE", `/boards/${id}`);
 
 export const getBoard = (id: string) => request<BoardDetail>("GET", `/boards/${id}`);
+
+export interface Member {
+  user_id: string;
+  username: string;
+  role: "owner" | "editor";
+}
+
+export const listMembers = (boardId: string) =>
+  request<Member[]>("GET", `/boards/${boardId}/members`);
+
+/** Adds a user as an editor (owner only). */
+export const addMember = (boardId: string, username: string) =>
+  request<Member>("POST", `/boards/${boardId}/members`, { username });
+
+/** Removes a member (owner only); their open sockets on the board are closed. */
+export const removeMember = (boardId: string, userId: string) =>
+  request<void>("DELETE", `/boards/${boardId}/members/${userId}`);
