@@ -60,3 +60,33 @@ async def export(c, board) -> bytes:
     r = await c.get(f"/api/boards/{board}/export.csv")
     assert r.status_code == 200, r.text
     return r.content
+
+
+async def import_csv(c, board, body: bytes | str, *, dry_run=False, client_id=None, **headers):
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    params = {"dry_run": "1"} if dry_run else {}
+    if client_id:
+        params["client_id"] = str(client_id)
+    return await c.post(
+        f"/api/boards/{board}/import",
+        content=body,
+        params=params,
+        headers={"Content-Type": "text/csv", **headers},
+    )
+
+
+async def imported(c, board, body, **kw) -> dict:
+    r = await import_csv(c, board, body, **kw)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def rows(data: bytes) -> list[list[str]]:
+    import csv
+    import io
+
+    return list(csv.reader(io.StringIO(data.decode("utf-8"), newline="")))[1:]
+
+
+HEADER = "id,title,status,date,parent,is_done,tags,description\r\n"

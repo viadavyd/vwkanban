@@ -18,14 +18,16 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vwkanban.auth.models import User
 from vwkanban.boards.deps import Membership, is_member
-from vwkanban.boards.models import Board, Card, Status
+from vwkanban.boards.models import COLORS, Board, Card, Status
 from vwkanban.boards.schemas import CardOut, StatusOut
+from vwkanban.csvio.import_ import Parsed
 from vwkanban.errors import ApiError
+from vwkanban.ids import uuid7
 from vwkanban.sync.fracindex import key_between
 from vwkanban.sync.hub import Hub
 from vwkanban.sync.models import BoardEvent
@@ -80,15 +82,7 @@ async def apply_op(
 ) -> Ack:
     board_id = member.board.id
     async with board_lock(board_id):
-        # End the access check's read transaction (commit: rollback would expire `member`).
-        await db.commit()
-        if not await is_member(db, board_id, member.user.id):
-            raise ApiError(
-                403,
-                "forbidden",
-                "you are no longer a member of this board",
-                {"op_id": str(op.op_id), "current": None},
-            )
+        await _check_member(db, member, op.op_id)
         prior = await db.scalar(select(BoardEvent).where(BoardEvent.op_id == op.op_id))
         if prior is not None:
             if prior.board_id != board_id:
@@ -102,29 +96,77 @@ async def apply_op(
                 _STATUS[r.code], r.code, r.message, {"op_id": str(op.op_id), "current": r.current}
             ) from None
         seq = data.pop("_seq")
-        event = {
-            "seq": seq,
-            "op_id": str(op.op_id),
-            "client_id": str(client_id),
-            "actor": {"id": str(member.user.id), "username": member.user.username},
-            "kind": op.kind,
-            "data": data,
-        }
-        db.add(
-            BoardEvent(
-                board_id=board_id,
-                seq=seq,
-                op_id=op.op_id,
-                client_id=client_id,
-                actor_id=member.user.id,
-                kind=op.kind,
-                payload=event,
-            )
-        )
-        await db.commit()
-        if hub is not None:
-            hub.broadcast(board_id, {"t": "event", **event})
+        event = await _commit_event(db, member, client_id, op.op_id, op.kind, seq, data, hub)
         return Ack(op_id=op.op_id, seq=seq, event=event)
+
+
+async def _check_member(db: AsyncSession, member: Membership, op_id: uuid.UUID | None) -> None:
+    """Under the board lock: ends the access check's read transaction (commit: rollback
+    would expire `member`) and re-checks the membership, so a write racing the member's
+    removal is refused."""
+    await db.commit()
+    if not await is_member(db, member.board.id, member.user.id):
+        raise ApiError(
+            403,
+            "forbidden",
+            "you are no longer a member of this board",
+            {"op_id": str(op_id), "current": None} if op_id else None,
+        )
+
+
+async def _commit_event(
+    db: AsyncSession,
+    member: Membership,
+    client_id: uuid.UUID,
+    op_id: uuid.UUID,
+    kind: str,
+    seq: int,
+    data: dict,
+    hub: Hub | None,
+) -> dict:
+    """Steps 6-7 of the pipeline: log the event, commit, broadcast it to the board's
+    sockets (still under the board lock, so broadcast order = seq order)."""
+    event = {
+        "seq": seq,
+        "op_id": str(op_id),
+        "client_id": str(client_id),
+        "actor": {"id": str(member.user.id), "username": member.user.username},
+        "kind": kind,
+        "data": data,
+    }
+    db.add(
+        BoardEvent(
+            board_id=member.board.id,
+            seq=seq,
+            op_id=op_id,
+            client_id=client_id,
+            actor_id=member.user.id,
+            kind=kind,
+            payload=event,
+        )
+    )
+    await db.commit()
+    if hub is not None:
+        hub.broadcast(member.board.id, {"t": "event", **event})
+    return event
+
+
+async def _next_seq(db: AsyncSession, board_id: uuid.UUID, numbers: int = 0) -> tuple[int, int]:
+    """Advances the board's seq (and reserves `numbers` card numbers) under its row lock.
+    Returns (seq, first reserved number)."""
+    row = (
+        await db.execute(
+            update(Board)
+            .where(Board.id == board_id)
+            .values(
+                seq=Board.seq + 1,
+                next_number=Board.next_number + numbers,
+                updated_at=func.now(),
+            )
+            .returning(Board.seq, Board.next_number)
+        )
+    ).one()
+    return row.seq, row.next_number - numbers
 
 
 class _Ctx:
@@ -138,21 +180,7 @@ class _Ctx:
         self.op = op
 
     async def next_seq(self, numbers: int = 0) -> tuple[int, int]:
-        """Advances the board's seq (and reserves `numbers` card numbers) under its row lock.
-        Returns (seq, first reserved number)."""
-        row = (
-            await self.db.execute(
-                update(Board)
-                .where(Board.id == self.board_id)
-                .values(
-                    seq=Board.seq + 1,
-                    next_number=Board.next_number + numbers,
-                    updated_at=func.now(),
-                )
-                .returning(Board.seq, Board.next_number)
-            )
-        ).one()
-        return row.seq, row.next_number - numbers
+        return await _next_seq(self.db, self.board_id, numbers)
 
     def stamp(self, row: Card | Status, fields: list[str], seq: int) -> None:
         stamp = {"seq": seq, "client": str(self.client_id)}
@@ -580,3 +608,142 @@ async def _status_delete(ctx: _Ctx, op: StatusDelete):
     await db.delete(status)
     await db.flush()
     return {"_seq": seq, "id": str(status.id), "purged_ids": [str(i) for i in purged]}
+
+
+# --- CSV import (plan §3.6) ----------------------------------------------------------------
+
+# A board with no columns gets this one for top-level rows with an empty status.
+DEFAULT_IMPORT_STATUS = "Todo"
+
+
+async def apply_import(
+    db: AsyncSession,
+    member: Membership,
+    client_id: uuid.UUID,
+    parsed: Parsed,
+    *,
+    dry_run: bool = False,
+    hub: Hub | None = None,
+) -> dict:
+    """Appends the parsed rows to the board in one transaction under the board lock: one
+    seq, one `board.import` event (clients resync), all or nothing. A dry run does the
+    same work and rolls back (the `I` preview): no seq, no event. Not undoable."""
+    board_id = member.board.id
+    async with board_lock(board_id):
+        await _check_member(db, member, None)
+        try:
+            result, seq = await _import_rows(db, member, client_id, parsed)
+        except BaseException:
+            await db.rollback()
+            raise
+        if dry_run:
+            await db.rollback()
+            return {**result, "seq": None}
+        data = {"created": result["created"], "statuses_created": result["statuses_created"]}
+        await _commit_event(db, member, client_id, uuid7(), "board.import", seq, data, hub)
+        return {**result, "seq": seq}
+
+
+async def _import_rows(
+    db: AsyncSession, member: Membership, client_id: uuid.UUID, parsed: Parsed
+) -> tuple[dict, int]:
+    board_id = member.board.id
+    rows = parsed.rows
+    statuses = (
+        await db.scalars(
+            select(Status).where(Status.board_id == board_id).order_by(Status.position, Status.id)
+        )
+    ).all()
+    by_name = {s.name.lower(): s.id for s in statuses}
+
+    # Columns: matched by name, case-insensitively; unknown names are appended right in
+    # order of first appearance, each with the palette colour after the rightmost one's.
+    new_statuses: list[Status] = []
+    last_pos = statuses[-1].position if statuses else None
+    last_color = statuses[-1].color if statuses else COLORS[-1]
+
+    def column_of(name: str) -> uuid.UUID:
+        nonlocal last_pos, last_color
+        if not name:
+            if statuses:
+                return statuses[0].id
+            name = DEFAULT_IMPORT_STATUS
+        if (found := by_name.get(name.lower())) is not None:
+            return found
+        last_pos = key_between(last_pos, None)
+        last_color = COLORS[(COLORS.index(last_color) + 1) % len(COLORS)]
+        status = Status(
+            id=uuid7(), board_id=board_id, name=name, color=last_color, position=last_pos
+        )
+        new_statuses.append(status)
+        by_name[name.lower()] = status.id
+        return status.id
+
+    targets = [column_of(r.status) if r.parent is None else None for r in rows]
+
+    # Numbers: the CSV ids as-is only on a board that never had a card (soft-deleted
+    # cards keep their numbers), so a round-trip into a new board is identical.
+    had_cards = await db.scalar(select(Card.id).where(Card.board_id == board_id).limit(1))
+    keep = had_cards is None and parsed.numbers_keepable
+    seq, first = await _next_seq(db, board_id, numbers=0 if keep else len(rows))
+    numbers = [int(r.key or 0) for r in rows] if keep else [first + i for i in range(len(rows))]
+    if keep and rows:
+        await db.execute(
+            update(Board)
+            .where(Board.id == board_id)
+            .values(next_number=func.greatest(Board.next_number, max(numbers) + 1))
+        )
+
+    # Positions: appended to the end of each column (live cards) and of each new parent's
+    # children, in file order.
+    ends = dict(
+        (
+            await db.execute(
+                select(Card.status_id, func.max(Card.position))
+                .where(
+                    Card.board_id == board_id,
+                    Card.parent_card_id.is_(None),
+                    Card.deleted_at.is_(None),
+                )
+                .group_by(Card.status_id)
+            )
+        ).all()
+    )
+    ids = [uuid7() for _ in rows]
+    stamp = {"seq": seq, "client": str(client_id)}
+    meta = dict.fromkeys(_CREATED_FIELDS, stamp)
+    top_level, children = [], []
+    for i, r in enumerate(rows):
+        scope = targets[i] if r.parent is None else ids[r.parent]
+        ends[scope] = key_between(ends.get(scope), None)
+        card = {
+            "id": ids[i],
+            "board_id": board_id,
+            "number": numbers[i],
+            "parent_card_id": None if r.parent is None else ids[r.parent],
+            "status_id": targets[i],
+            "position": ends[scope],
+            "title": r.title,
+            "description": r.description,
+            "is_done": r.is_done,
+            "tags": r.tags,
+            "date": r.date,
+            "field_meta": meta,
+            "created_by": member.user.id,
+        }
+        (top_level if r.parent is None else children).append(card)
+
+    status_meta = dict.fromkeys(_STATUS_FIELDS, stamp)
+    for s in new_statuses:
+        s.field_meta = status_meta
+    db.add_all(new_statuses)
+    await db.flush()
+    for batch in (top_level, children):  # parents exist before their children
+        if batch:
+            await db.execute(insert(Card), batch)
+    return {
+        "created": len(rows),
+        "statuses_created": [s.name for s in new_statuses],
+        "numbers": "kept" if keep else "renumbered",
+        "warnings": parsed.warnings,
+    }, seq

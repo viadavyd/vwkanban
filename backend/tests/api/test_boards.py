@@ -43,7 +43,8 @@ def _create_op(status_ids):
 
 
 BOARD_ROUTES = [
-    # method, path, json body (or a function of the board's status ids), minimum role
+    # method, path, body (json, a function of the board's status ids, or raw CSV bytes),
+    # minimum role
     ("GET", "/api/boards/{board_id}", None, "editor"),
     ("PATCH", "/api/boards/{board_id}", {"title": "Renamed"}, "owner"),
     ("DELETE", "/api/boards/{board_id}", None, "owner"),
@@ -52,6 +53,8 @@ BOARD_ROUTES = [
     ("POST", "/api/boards/{board_id}/members", {"username": "carol"}, "owner"),
     ("DELETE", "/api/boards/{board_id}/members/{user_id}", None, "owner"),
     ("GET", "/api/boards/{board_id}/export.csv", None, "editor"),
+    # bytes = a raw text/csv body
+    ("POST", "/api/boards/{board_id}/import", b"title\r\nimported\r\n", "editor"),
 ]
 
 
@@ -86,7 +89,11 @@ async def test_access_matrix(make_client, engine, alice, method, path, body, min
             await login_as(c, "alice")
         elif who in ("editor", "stranger"):
             await login_as(c, "bob")
-        r = await c.request(method, path.format(board_id=board, user_id=carol), json=body)
+        url = path.format(board_id=board, user_id=carol)
+        if isinstance(body, bytes):
+            r = await c.request(method, url, content=body, headers={"Content-Type": "text/csv"})
+        else:
+            r = await c.request(method, url, json=body)
 
     expected = {
         "anonymous": 401,
