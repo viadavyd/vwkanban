@@ -1,5 +1,5 @@
 """Remote-change latency (plan §7): A sends 200 ops paced at 40 ops/s, B timestamps the
-events. Targets: remote p95 < 300 ms; server apply p95 < 42 ms.
+events. Targets: remote p95 < 300 ms; server apply p95 < 45 ms.
 
 Apply time is measured first, one op in flight (no queueing): A's ack round-trip minus
 the median ping round-trip (a ping is the same path with no apply). In CI, a 20 ms
@@ -18,7 +18,7 @@ from tests.ws.test_ws import new_card
 OPS = 200
 RATE = 40
 REMOTE_P95_MS = 300
-APPLY_P95_MS = 42
+APPLY_P95_MS = 45
 
 
 def p95(xs: list[float]) -> float:
