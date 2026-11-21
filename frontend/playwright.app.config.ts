@@ -21,5 +21,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
       dependencies: ["setup"],
     },
+    // The vim Esc/Ctrl+C bridge was proven on Chromium only (M0 spike report): its
+    // "vim:" tests also run in Firefox. They reuse the setup's login (rate limit).
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+      testMatch: /card-mode\.spec\.ts$/,
+      grep: / vim: /,
+      dependencies: ["setup"],
+    },
   ],
 });
