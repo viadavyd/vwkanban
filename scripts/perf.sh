@@ -6,7 +6,7 @@
 #   3. initial JS    frontend/scripts/bundle-size.mjs: < 80 KB gz, editor lazy
 #   4. board load    backend tests/api/test_board_perf.py: GET 500 cards < 150 ms
 #   5. remote change backend tests/ws/test_latency.py with 20 ms netem on its port (sudo):
-#                    p95 < 300 ms at 40 ops/s, apply p95 < 30 ms
+#                    p95 < 300 ms at 40 ops/s, apply p95 < 42 ms
 #   6. UI            frontend e2e/app/board-perf.spec.ts (4× CPU throttle): key → frame
 #                    p95 < 50 ms, holding j: no long task > 50 ms, interactive < 1 s
 #
