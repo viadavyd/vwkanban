@@ -150,7 +150,7 @@ async def test_move_after_other_deleted_is_gone(two):
     assert (await send(b, board, "card.delete", {"id": card["id"]})).status_code == 200
     r = await send(a, board, "card.move", mv(card, doing))
     assert r.status_code == 410
-    assert r.json()["error"]["message"] == f"#{card['number']} was deleted"
+    assert r.json()["error"]["message"] == f"#{card['number']} was deleted by bob"
 
 
 async def test_move_into_column_while_other_deletes_it(two):

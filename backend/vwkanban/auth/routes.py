@@ -11,11 +11,13 @@ from vwkanban.auth.sessions import (
     clear_session_cookie,
     create_session,
     delete_session,
+    hash_token,
     set_session_cookie,
 )
 from vwkanban.auth.users import create_user
 from vwkanban.auth.validation import PASSWORD_MAX, check_password, normalize_username
 from vwkanban.errors import ApiError
+from vwkanban.sync.ws import CLOSE_NO_SESSION
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -100,10 +102,12 @@ async def signup(request: Request, response: Response, db: Db, settings: AppSett
 @router.post("/logout", status_code=204)
 async def logout(request: Request, response: Response, db: Db, settings: AppSettings) -> None:
     # No session required: an expired or unknown cookie is still cleared (idempotent).
-    await delete_session(db, request.cookies.get(COOKIE_NAME))
+    token = request.cookies.get(COOKIE_NAME)
+    await delete_session(db, token)
     await db.commit()
     clear_session_cookie(response, settings)
-    # M4: also close this session's sockets with 4401.
+    if token:
+        request.app.state.hub.close_session(hash_token(token), CLOSE_NO_SESSION)
 
 
 @router.get("/me")

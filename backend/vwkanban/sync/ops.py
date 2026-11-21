@@ -6,8 +6,10 @@
 4. UPDATE boards SET seq=seq+1, next_number=... RETURNING (row lock, allocation)
 5. undo check (`undo: true`) against field_meta; mutate; every written field gets
    field_meta[f] = {seq, client}
-6. append to board_events, commit, ack
-A reject rolls back, so the seq is not consumed.
+6. append to board_events, commit, broadcast the event to the board's sockets (sender
+   included: its client drops the pending op by op_id), ack
+A reject rolls back, so the seq is not consumed. The membership is re-checked under the
+lock, so an op racing the member's removal is refused.
 """
 
 import asyncio
@@ -19,11 +21,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vwkanban.auth.models import User
-from vwkanban.boards.deps import Membership
+from vwkanban.boards.deps import Membership, load_membership
 from vwkanban.boards.models import Board, Card, Status
 from vwkanban.boards.schemas import CardOut, StatusOut
 from vwkanban.errors import ApiError
 from vwkanban.sync.fracindex import key_between
+from vwkanban.sync.hub import Hub
 from vwkanban.sync.models import BoardEvent
 from vwkanban.sync.schemas import (
     Ack,
@@ -40,6 +43,12 @@ from vwkanban.sync.schemas import (
 )
 
 _locks: defaultdict[uuid.UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def board_lock(board_id: uuid.UUID) -> asyncio.Lock:
+    """Serializes a board's ops (and a socket's registration, so replay has no gap)."""
+    return _locks[board_id]
+
 
 _STATUS = {"not_found": 404, "gone": 410, "validation": 422, "conflict": 409, "forbidden": 403}
 
@@ -60,11 +69,24 @@ def status_out(status: Status) -> dict:
     return StatusOut.model_validate(status, from_attributes=True).model_dump(mode="json")
 
 
-async def apply_op(db: AsyncSession, member: Membership, client_id: uuid.UUID, op: Op) -> Ack:
+async def apply_op(
+    db: AsyncSession,
+    member: Membership,
+    client_id: uuid.UUID,
+    op: Op,
+    hub: Hub | None = None,
+) -> Ack:
     board_id = member.board.id
-    async with _locks[board_id]:
+    async with board_lock(board_id):
         # End the access check's read transaction (commit: rollback would expire `member`).
         await db.commit()
+        if await load_membership(db, board_id, member.user) is None:
+            raise ApiError(
+                403,
+                "forbidden",
+                "you are no longer a member of this board",
+                {"op_id": str(op.op_id), "current": None},
+            )
         prior = await db.scalar(select(BoardEvent).where(BoardEvent.op_id == op.op_id))
         if prior is not None:
             if prior.board_id != board_id:
@@ -98,6 +120,8 @@ async def apply_op(db: AsyncSession, member: Membership, client_id: uuid.UUID, o
             )
         )
         await db.commit()
+        if hub is not None:
+            hub.broadcast(board_id, {"t": "event", **event})
         return Ack(op_id=op.op_id, seq=seq, event=event)
 
 
@@ -141,12 +165,20 @@ class _Ctx:
         for f in fields:
             s = meta.get(f)
             if s and s["seq"] > self.op.base_seq and s["client"] != str(self.client_id):
-                who = await self.db.scalar(
-                    select(User.username)
-                    .join(BoardEvent, BoardEvent.actor_id == User.id)
-                    .where(BoardEvent.board_id == self.board_id, BoardEvent.seq == s["seq"])
-                )
-                raise Reject("conflict", f"can't undo: changed by {who or 'another user'}", current)
+                who = await self.who(s)
+                raise Reject("conflict", f"can't undo: changed by {who}", current)
+
+    async def who(self, stamp: dict | None) -> str:
+        """Who wrote a field_meta stamp, for messages ("another user" once its event has
+        been trimmed from the log)."""
+        name = None
+        if stamp:
+            name = await self.db.scalar(
+                select(User.username)
+                .join(BoardEvent, BoardEvent.actor_id == User.id)
+                .where(BoardEvent.board_id == self.board_id, BoardEvent.seq == stamp["seq"])
+            )
+        return name or "another user"
 
 
 async def _apply(ctx: _Ctx) -> dict:
@@ -230,7 +262,8 @@ async def _card(ctx: _Ctx, card_id: uuid.UUID) -> Card:
     if card is None:
         raise Reject("not_found", "card not found")
     if card.deleted_at is not None:
-        raise Reject("gone", f"#{card.number} was deleted")
+        who = await ctx.who(card.field_meta.get("deleted"))
+        raise Reject("gone", f"#{card.number} was deleted by {who}")
     return card
 
 
