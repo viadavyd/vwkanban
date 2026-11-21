@@ -1,7 +1,18 @@
 <script lang="ts">
   import { pushMode } from "../lib/keys/dispatch";
 
-  let { message, onyes, onno }: { message: string; onyes: () => void; onno: () => void } = $props();
+  let {
+    message,
+    details = [],
+    onyes,
+    onno,
+  }: {
+    message: string;
+    /** Extra lines under the question (e.g. an import's new columns and warnings). */
+    details?: string[];
+    onyes: () => void;
+    onno: () => void;
+  } = $props();
 
   $effect(() => pushMode("confirm", (action) => (action === "yes" ? onyes() : onno())));
 </script>
@@ -9,6 +20,13 @@
 <div class="backdrop">
   <div class="dialog" role="alertdialog" aria-modal="true" aria-label={message}>
     <p>{message}</p>
+    {#if details.length}
+      <ul class="details" data-testid="confirm-details">
+        {#each details as line, i (i)}
+          <li>{line}</li>
+        {/each}
+      </ul>
+    {/if}
     <p class="hint"><kbd>y</kbd> yes · <kbd>n</kbd> no</p>
   </div>
 </div>
@@ -30,6 +48,14 @@
   }
   p {
     margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .details {
+    margin: 0.6rem 0 0;
+    padding-left: 1.2rem;
+    max-height: 40vh;
+    overflow-y: auto;
+    color: #444;
     overflow-wrap: anywhere;
   }
   .hint {

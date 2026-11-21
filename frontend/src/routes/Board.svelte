@@ -17,7 +17,15 @@
   import Prompt from "../components/Prompt.svelte";
   import TopBar from "../components/TopBar.svelte";
   import type { User } from "../lib/api/auth";
-  import { getBoard, type BoardDetail, type Status } from "../lib/api/boards";
+  import {
+    CSV_MAX_BYTES,
+    exportUrl,
+    getBoard,
+    importCsv,
+    type BoardDetail,
+    type ImportResult,
+    type Status,
+  } from "../lib/api/boards";
   import { ApiError } from "../lib/api/client";
   import { loadEditor } from "../lib/editor/load";
   import { uuid7 } from "../lib/ids";
@@ -51,7 +59,7 @@
     type PresenceUser,
     type SyncStatus,
   } from "../lib/sync/socket";
-  import { BoardStore } from "../lib/sync/store";
+  import { BoardStore, CLIENT_ID } from "../lib/sync/store";
 
   let {
     id,
@@ -71,7 +79,8 @@
     | { kind: "members" }
     | { kind: "columnCreate" }
     | { kind: "columnRename"; status: Status }
-    | { kind: "columnDelete"; status: Status };
+    | { kind: "columnDelete"; status: Status }
+    | { kind: "import"; file: File; preview: ImportResult };
 
   let title = $state("…");
   let store = $state.raw<BoardStore | null>(null);
@@ -91,6 +100,11 @@
   // The top bar's mode: BOARD, CARD, or vim's NORMAL / INSERT / VISUAL in a field.
   let modeLabel = $state("board");
   let message = $state("");
+  // The message is news, not an error (e.g. "imported 12 cards").
+  let messageOk = $state(false);
+  // `I`: the hidden file picker, and an upload on its way (one at a time).
+  let fileInput = $state<HTMLInputElement>();
+  let importing = $state(false);
 
   // Selection: a column and a card in it (by id, so it survives inserts above it).
   // `want` is the row h/l try to keep.
@@ -157,6 +171,10 @@
    * say so when they moved the selected card (plan §3.5, §9). */
   function remoteChange(ev: BoardEvent) {
     const who = ev.actor.username;
+    if (ev.kind === "board.import") {
+      note(`${who} imported ${cardCount(ev.data.created ?? 0)}`);
+      return;
+    }
     if (opened && ev.data.deleted_ids?.includes(opened.id)) openDeletedBy = who;
     if (marked && ev.data.deleted_ids?.includes(marked.id)) {
       message = `#${markedNumber} was deleted by ${who}`;
@@ -362,8 +380,86 @@
     selCol = Math.max(0, Math.min(selCol, statuses.length - 1));
   }
 
+  function note(text: string) {
+    message = text;
+    messageOk = true;
+  }
+
+  const cardCount = (n: number) => `${n} card${n === 1 ? "" : "s"}`;
+
+  // --- CSV (plan §3.6, §4.3) ---------------------------------------------------------
+
+  /** `E`: the browser downloads the export (the server names the file). */
+  function exportCsv() {
+    const a = document.createElement("a");
+    a.href = exportUrl(id);
+    a.download = "";
+    a.click();
+  }
+
+  /** `I`: opens the file picker from the keydown (a user gesture, so browsers allow it). */
+  function pickCsv() {
+    if (!store || !fileInput || importing) return;
+    fileInput.value = "";
+    fileInput.click();
+  }
+
+  /** A file was picked: a dry run shows what the import adds, then `y` imports. */
+  async function picked() {
+    const file = fileInput?.files?.[0];
+    if (!file || !store) return;
+    if (file.size > CSV_MAX_BYTES) {
+      message = "file is larger than 5 MB";
+      return;
+    }
+    importing = true;
+    try {
+      const preview = await importCsv(id, file, CLIENT_ID, true);
+      if (!preview.created) note("the file has no cards to import");
+      else if (opened || overlay) message = "import cancelled: close the open view first";
+      else overlay = { kind: "import", file, preview };
+    } catch (e) {
+      importFailed(e);
+    } finally {
+      importing = false;
+    }
+  }
+
+  function previewText(p: ImportResult) {
+    const numbers = p.numbers === "kept" ? "keeping their numbers" : "with new numbers";
+    return `Import ${cardCount(p.created)} into "${title}", ${numbers}?`;
+  }
+
+  function previewDetails(p: ImportResult) {
+    const lines = [];
+    if (p.statuses_created.length) lines.push(`new columns: ${p.statuses_created.join(", ")}`);
+    return [...lines, ...p.warnings];
+  }
+
+  async function confirmImport(file: File) {
+    overlay = null;
+    importing = true;
+    try {
+      const r = await importCsv(id, file, CLIENT_ID, false);
+      note(`imported ${cardCount(r.created)}`);
+      // The board.import event makes the store reload the board (plan §3.2).
+    } catch (e) {
+      importFailed(e);
+    } finally {
+      importing = false;
+    }
+  }
+
+  function importFailed(e: unknown) {
+    if (e instanceof ApiError && e.status === 401) onloggedout();
+    else if (e instanceof ApiError && e.status === 404) {
+      onback("that board doesn't exist or isn't shared with you");
+    } else message = e instanceof ApiError ? e.message : "Something went wrong";
+  }
+
   function onkey(action: Action) {
     message = "";
+    messageOk = false;
     switch (action) {
       case "left":
       case "down":
@@ -407,6 +503,10 @@
       case "members":
         overlay = { kind: "members" };
         return;
+      case "exportCsv":
+        return exportCsv();
+      case "importCsv":
+        return pickCsv();
     }
   }
 
@@ -484,7 +584,16 @@
       {/each}
     </div>
   {/if}
-  <p class="message" role="status">{message}</p>
+  <p class="message" class:ok={messageOk} role="status">{message}</p>
+  <!-- `I`: hidden, so it never holds focus (keys would go to it, not the board) -->
+  <input
+    bind:this={fileInput}
+    type="file"
+    accept=".csv,text/csv"
+    hidden
+    data-testid="csv-file"
+    onchange={picked}
+  />
 </main>
 
 {#if opened && store && view}
@@ -530,6 +639,14 @@
     onyes={() => confirmDeleteColumn(status)}
     onno={() => (overlay = null)}
   />
+{:else if overlay?.kind === "import"}
+  {@const { file, preview } = overlay}
+  <Confirm
+    message={previewText(preview)}
+    details={previewDetails(preview)}
+    onyes={() => confirmImport(file)}
+    onno={() => (overlay = null)}
+  />
 {/if}
 
 <style>
@@ -561,5 +678,8 @@
     min-height: 1.2em;
     margin: 0.3rem 0;
     color: #b00020;
+  }
+  .message.ok {
+    color: #1b5e20;
   }
 </style>

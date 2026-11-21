@@ -68,7 +68,8 @@ export interface BoardEvent {
   op_id: string;
   client_id: string;
   actor: { id: string; username: string };
-  kind: Op["kind"];
+  /** `board.import` is server-only (a CSV import): clients resync, never apply it. */
+  kind: Op["kind"] | "board.import";
   data: {
     card?: Card;
     /** pasted or restored children */
@@ -78,6 +79,9 @@ export interface BoardEvent {
     status?: Status;
     /** soft-deleted cards purged with a deleted column */
     purged_ids?: string[];
+    /** board.import: how many cards and which new columns */
+    created?: number;
+    statuses_created?: string[];
   };
 }
 

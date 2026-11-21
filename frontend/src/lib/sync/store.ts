@@ -98,6 +98,7 @@ export class BoardStore {
   private buffer = new Map<number, BoardEvent>();
   private gapTimer = false;
   private resyncing = false;
+  private resyncAgain = false;
   private undoStack: UndoEntry[] = [];
   /** op_ids whose seq an undo may still need (on the stack, or undone but unacked) */
   private tracked = new Set<string>();
@@ -327,9 +328,14 @@ export class BoardStore {
 
   private event(ev: BoardEvent): void {
     if (ev.seq <= this.confirmed.seq) return;
+    if (ev.kind === "board.import" && ev.client_id !== CLIENT_ID) this.hooks.onremote?.(ev);
     if (ev.seq > this.confirmed.seq + 1) {
       this.buffer.set(ev.seq, ev);
       return this.armGap();
+    }
+    if (ev.kind === "board.import") {
+      this.buffer.set(ev.seq, ev);
+      return this.drain();
     }
     this.apply(ev);
     this.drain();
@@ -353,12 +359,18 @@ export class BoardStore {
     }, GAP_WAIT_MS);
   }
 
-  /** Applies buffered events that are now next in line. */
+  /** Applies buffered events that are now next in line. A `board.import` is never
+   * applied: it says only that the server's state changed wholesale (plan §3.2), so the
+   * store resyncs; the fresh load is at or past its seq, so it is dropped then. */
   private drain(): void {
     for (const seq of [...this.buffer.keys()])
       if (seq <= this.confirmed.seq) this.buffer.delete(seq);
     let next: BoardEvent | undefined;
     while ((next = this.buffer.get(this.confirmed.seq + 1))) {
+      if (next.kind === "board.import") {
+        void this.resync();
+        return;
+      }
       this.buffer.delete(next.seq);
       this.apply(next);
     }
@@ -385,8 +397,13 @@ export class BoardStore {
 
   /** Replaces confirmed with a fresh load (pending ops stay on top). */
   async resync(): Promise<void> {
-    if (this.resyncing) return;
+    if (this.resyncing) {
+      // A load already on its way may predate what asked for this one: load again after.
+      this.resyncAgain = true;
+      return;
+    }
     this.resyncing = true;
+    this.resyncAgain = false;
     try {
       const d = await this.hooks.load();
       if (this.closed) return;
@@ -401,7 +418,8 @@ export class BoardStore {
       else this.hooks.onmessage(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
       this.resyncing = false;
-      this.armGap(); // events past the fresh state that still have a gap before them
+      if (this.resyncAgain && !this.closed) void this.resync();
+      else this.armGap(); // events past the fresh state that still have a gap before them
     }
   }
 }
