@@ -223,3 +223,24 @@ async def test_board_writes_need_origin(make_client, engine, alice, method):
     async with make_client(origin=PUBLIC_URL) as c:
         await login_as(c, "alice")
         assert len((await c.get("/api/boards")).json()) == 1
+
+
+async def test_board_load_returns_live_cards(as_alice, engine, alice):
+    board, (todo, doing, _) = await add_board(engine, alice, "B")
+    other, (other_todo, *_) = await add_board(engine, alice, "Other")
+    c2 = await add_card(engine, board, alice, number=2, status_id=todo)
+    c1 = await add_card(engine, board, alice, number=1, status_id=todo)
+    c3 = await add_card(engine, board, alice, number=3, status_id=doing, is_done=True)
+    child = await add_card(engine, board, alice, number=4, parent_id=c3)
+    await add_card(engine, board, alice, number=5, status_id=todo, deleted=True)
+    await add_card(engine, other, alice, number=1, status_id=other_todo)
+
+    cards = (await as_alice.get(f"/api/boards/{board}")).json()["cards"]
+    by_id = {c["id"]: c for c in cards}
+    assert set(by_id) == {str(c1), str(c2), str(c3), str(child)}
+    todo_ids = [c["id"] for c in cards if c["status_id"] == str(todo)]
+    assert todo_ids == [str(c1), str(c2)]  # by position (nth_key(number))
+    assert by_id[str(child)]["parent_card_id"] == str(c3)
+    assert by_id[str(child)]["status_id"] is None
+    assert by_id[str(c3)]["is_done"] is True
+    assert set(by_id[str(c1)]) >= {"number", "position", "title", "tags", "date", "field_meta"}

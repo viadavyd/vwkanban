@@ -4,11 +4,12 @@ from sqlalchemy import delete, func, select, update
 from vwkanban.auth.deps import CurrentUser, Db
 from vwkanban.auth.models import User
 from vwkanban.boards.deps import Member, Owner
-from vwkanban.boards.models import Board, BoardMember, Status
+from vwkanban.boards.models import Board, BoardMember, Card, Status
 from vwkanban.boards.schemas import (
     BoardDetail,
     BoardIn,
     BoardOut,
+    CardOut,
     DashboardItem,
     MemberOut,
     StatusOut,
@@ -18,7 +19,7 @@ from vwkanban.ids import uuid7
 
 router = APIRouter(prefix="/boards", tags=["boards"])
 
-# New boards get these columns. Positions are fractional-index keys (sync/fracindex, M3a).
+# New boards get these columns. Positions are fractional-index keys (sync/fracindex).
 SEED_STATUSES = (("Todo", "gray", "a0"), ("Doing", "blue", "a1"), ("Done", "green", "a2"))
 
 
@@ -75,10 +76,16 @@ async def get_board(member: Member, db: Db) -> BoardDetail:
         .where(BoardMember.board_id == board.id)
         .order_by(User.username)
     )
+    # Live cards, top-level and children, served by the partial indexes on cards.
+    cards = await db.scalars(
+        select(Card)
+        .where(Card.board_id == board.id, Card.deleted_at.is_(None))
+        .order_by(Card.status_id, Card.parent_card_id, Card.position)
+    )
     return BoardDetail(
         board=BoardOut.model_validate(board, from_attributes=True),
         seq=board.seq,
         statuses=[StatusOut.model_validate(s, from_attributes=True) for s in statuses],
-        cards=[],
+        cards=[CardOut.model_validate(c, from_attributes=True) for c in cards],
         members=[MemberOut(user_id=m.id, username=m.username, role=m.role) for m in members],
     )

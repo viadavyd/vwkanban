@@ -50,6 +50,24 @@ class StatusOut(BaseModel):
     position: str
 
 
+class CardOut(BaseModel):
+    """A card as clients see it (board load, op events, reject `current`)."""
+
+    id: uuid.UUID
+    number: int
+    status_id: uuid.UUID | None
+    parent_card_id: uuid.UUID | None
+    position: str
+    title: str
+    description: str
+    is_done: bool
+    tags: list[str]
+    date: dt.date | None
+    field_meta: dict
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
 class MemberOut(BaseModel):
     user_id: uuid.UUID
     username: str
@@ -60,5 +78,5 @@ class BoardDetail(BaseModel):
     board: BoardOut
     seq: int
     statuses: list[StatusOut]
-    cards: list[dict]  # filled from M3a
+    cards: list[CardOut]  # live cards, top-level and children
     members: list[MemberOut]
