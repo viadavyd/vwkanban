@@ -1,5 +1,4 @@
 import { request } from "./client";
-import type { Ack, Op } from "../sync/ops";
 
 export interface StatusCount {
   name: string;
@@ -66,8 +65,3 @@ export const renameBoard = (id: string, title: string) =>
 export const deleteBoard = (id: string) => request<void>("DELETE", `/boards/${id}`);
 
 export const getBoard = (id: string) => request<BoardDetail>("GET", `/boards/${id}`);
-
-/** Sends one op (plan §3.2). Resolves with the ack; a reject throws ApiError whose
- * `details.current` is the entity's server state (or null). */
-export const postOp = (boardId: string, clientId: string, op: Op) =>
-  request<Ack>("POST", `/boards/${boardId}/ops`, { client_id: clientId, op });

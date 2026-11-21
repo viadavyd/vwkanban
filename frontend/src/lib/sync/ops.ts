@@ -66,13 +66,6 @@ export interface BoardEvent {
   };
 }
 
-export interface Ack {
-  t: "ack";
-  op_id: string;
-  seq: number;
-  event: BoardEvent;
-}
-
 /** Server state at `seq`. */
 export interface Confirmed {
   seq: number;

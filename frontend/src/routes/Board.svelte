@@ -38,9 +38,17 @@
     moveStatus,
     setDone,
     updateStatus,
+    type BoardEvent,
     type BoardView,
+    type Op,
   } from "../lib/sync/ops";
   import { pasteOp, snapshot } from "../lib/sync/register";
+  import {
+    BoardSocket,
+    boardSocketUrl,
+    type PresenceUser,
+    type SyncStatus,
+  } from "../lib/sync/socket";
   import { BoardStore } from "../lib/sync/store";
 
   let {
@@ -48,7 +56,13 @@
     user,
     onback,
     onloggedout,
-  }: { id: string; user: User; onback: () => void; onloggedout: () => void } = $props();
+  }: {
+    id: string;
+    user: User;
+    /** Back to the dashboard; `why` is shown there when the board closed on its own. */
+    onback: (why?: string) => void;
+    onloggedout: () => void;
+  } = $props();
 
   type Overlay =
     | { kind: "help" }
@@ -58,6 +72,11 @@
 
   let title = $state("…");
   let store: BoardStore | null = null;
+  let socket: BoardSocket | null = null;
+  let syncStatus = $state<SyncStatus>("connecting");
+  let unsaved = $state(0);
+  let presence = $state<PresenceUser[]>([]);
+  const others = $derived(presence.filter((u) => u.user_id !== user.id));
   // Raw: the view is rebuilt as a whole; unchanged cards keep their identity.
   let view = $state.raw<BoardView | null>(null);
   let overlay = $state<Overlay | null>(null);
@@ -98,8 +117,9 @@
 
   function fail(e: unknown) {
     if (e instanceof ApiError && e.status === 401) onloggedout();
-    else if (e instanceof ApiError && (e.status === 404 || e.status === 422)) onback();
-    else message = e instanceof ApiError ? e.message : "Something went wrong";
+    else if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
+      onback("that board doesn't exist or isn't shared with you");
+    } else message = e instanceof ApiError ? e.message : "Something went wrong";
   }
 
   async function load(boardId: string) {
@@ -111,13 +131,39 @@
     }
     title = detail.board.title;
     store = new BoardStore(boardId, detail, {
-      onchange: (v) => (view = v),
+      onchange: (v) => {
+        view = v;
+        unsaved = store?.pendingCount ?? 0;
+      },
       onmessage: (m) => (message = m),
       onloggedout,
-      ongone: onback,
+      ongone: (why) => onback(why),
+      onstatus: (s) => (syncStatus = s),
+      onpresence: (users) => (presence = users),
+      onremote: remoteChange,
+      onreject: rejected,
       load: () => getBoard(boardId),
+      connect: (hooks) => (socket = new BoardSocket(boardSocketUrl(boardId, location), hooks)),
     });
     view = store.view;
+  }
+
+  /** A teammate's change touched what we hold: clear a mark on a card they deleted, and
+   * say so when they moved the selected card (plan §3.5, §9). */
+  function remoteChange(ev: BoardEvent) {
+    const who = ev.actor.username;
+    if (marked && ev.data.deleted_ids?.includes(marked.id)) {
+      message = `#${markedNumber} was deleted by ${who}`;
+      register = null;
+    } else if (ev.kind === "card.move" && ev.data.card?.id === selectedId) {
+      message = `#${ev.data.card.number} was moved by ${who}`;
+      selectCard(ev.data.card.id);
+    }
+  }
+
+  /** A move of the x-marked card that the server refused: the mark is stale. */
+  function rejected(op: Op, code: string) {
+    if (code === "gone" && marked && "id" in op.data && op.data.id === marked.id) register = null;
   }
 
   function cardsOf(col: number) {
@@ -346,6 +392,18 @@
 
   $effect(() => pushMode("board", (a) => onkey(a)));
 
+  // Reconnect at once when the network returns; show offline when it goes.
+  $effect(() => {
+    const online = () => socket?.retryNow();
+    const offline = () => socket?.wentOffline();
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  });
+
   $effect(() => {
     if (!prefix) return;
     return pushMode("column", (a) => (a === "back" ? (prefix = false) : columnCommand(a)));
@@ -360,7 +418,14 @@
   });
 </script>
 
-<TopBar mode="board" {pending} {title} username={user.username} />
+<TopBar
+  mode="board"
+  {pending}
+  {title}
+  username={user.username}
+  {others}
+  sync={{ status: syncStatus, pending: unsaved }}
+/>
 
 <main>
   {#if view}
