@@ -21,7 +21,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vwkanban.auth.models import User
-from vwkanban.boards.deps import Membership, load_membership
+from vwkanban.boards.deps import Membership, is_member
 from vwkanban.boards.models import Board, Card, Status
 from vwkanban.boards.schemas import CardOut, StatusOut
 from vwkanban.errors import ApiError
@@ -80,7 +80,7 @@ async def apply_op(
     async with board_lock(board_id):
         # End the access check's read transaction (commit: rollback would expire `member`).
         await db.commit()
-        if await load_membership(db, board_id, member.user) is None:
+        if not await is_member(db, board_id, member.user.id):
             raise ApiError(
                 403,
                 "forbidden",

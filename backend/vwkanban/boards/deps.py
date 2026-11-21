@@ -34,6 +34,16 @@ async def load_membership(db: AsyncSession, board_id: uuid.UUID, user: User) -> 
     return None if row is None else Membership(board=row[0], user=user, role=row[1])
 
 
+async def is_member(db: AsyncSession, board_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """A cheap membership check (one indexed row, no board load), for every op."""
+    found = await db.scalar(
+        select(BoardMember.role).where(
+            BoardMember.board_id == board_id, BoardMember.user_id == user_id
+        )
+    )
+    return found is not None
+
+
 async def require_member(board_id: uuid.UUID, user: CurrentUser, db: Db) -> Membership:
     member = await load_membership(db, board_id, user)
     if member is None:
