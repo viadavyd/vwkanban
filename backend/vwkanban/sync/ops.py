@@ -15,13 +15,13 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vwkanban.auth.models import User
 from vwkanban.boards.deps import Membership
 from vwkanban.boards.models import Board, Card, Status
-from vwkanban.boards.schemas import CardOut
+from vwkanban.boards.schemas import CardOut, StatusOut
 from vwkanban.errors import ApiError
 from vwkanban.sync.fracindex import key_between
 from vwkanban.sync.models import BoardEvent
@@ -33,6 +33,10 @@ from vwkanban.sync.schemas import (
     CardRestore,
     CardUpdate,
     Op,
+    StatusCreate,
+    StatusDelete,
+    StatusMove,
+    StatusUpdate,
 )
 
 _locks: defaultdict[uuid.UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -50,6 +54,10 @@ class Reject(Exception):
 
 def card_out(card: Card) -> dict:
     return CardOut.model_validate(card, from_attributes=True).model_dump(mode="json")
+
+
+def status_out(status: Status) -> dict:
+    return StatusOut.model_validate(status, from_attributes=True).model_dump(mode="json")
 
 
 async def apply_op(db: AsyncSession, member: Membership, client_id: uuid.UUID, op: Op) -> Ack:
@@ -153,6 +161,14 @@ async def _apply(ctx: _Ctx) -> dict:
             return await _move(ctx, ctx.op)
         case CardRestore():
             return await _restore(ctx, ctx.op)
+        case StatusCreate():
+            return await _status_create(ctx, ctx.op)
+        case StatusUpdate():
+            return await _status_update(ctx, ctx.op)
+        case StatusMove():
+            return await _status_move(ctx, ctx.op)
+        case StatusDelete():
+            return await _status_delete(ctx, ctx.op)
     raise AssertionError(ctx.op)
 
 
@@ -376,3 +392,106 @@ async def _restore(ctx: _Ctx, op: CardRestore):
     for c in (card, *children):
         await db.refresh(c)
     return {"_seq": seq, "card": card_out(card), "children": [card_out(c) for c in children]}
+
+
+# --- statuses (columns) ------------------------------------------------------------------
+
+_STATUS_FIELDS = ["name", "color", "position", "created"]
+
+
+def _board_statuses(board_id: uuid.UUID, exclude: uuid.UUID | None = None):
+    scope = (Status.board_id == board_id,)
+    return (*scope, Status.id != exclude) if exclude else scope
+
+
+async def _status(ctx: _Ctx, status_id: uuid.UUID) -> Status:
+    status = await ctx.db.scalar(
+        select(Status)
+        .where(Status.id == status_id, Status.board_id == ctx.board_id)
+        .with_for_update()
+    )
+    if status is None:
+        raise Reject("gone", "that column no longer exists")
+    return status
+
+
+async def _name_taken(ctx: _Ctx, name: str, exclude: uuid.UUID | None = None) -> bool:
+    """Names are unique per board, case-insensitively (CSV import matches them that way)."""
+    found = await ctx.db.scalar(
+        select(Status.id).where(
+            *_board_statuses(ctx.board_id, exclude), func.lower(Status.name) == name.lower()
+        )
+    )
+    return found is not None
+
+
+async def _status_create(ctx: _Ctx, op: StatusCreate):
+    """Also the undo of status.delete: it recreates the column with its old id."""
+    d = op.data
+    if await ctx.db.scalar(select(Status.id).where(Status.id == d.id)) is not None:
+        raise Reject("validation", "column id already exists")
+    if await _name_taken(ctx, d.name):
+        raise Reject("validation", f"a column named {d.name!r} already exists")
+    seq, _ = await ctx.next_seq()
+    scope = _board_statuses(ctx.board_id)
+    status = Status(
+        id=d.id,
+        board_id=ctx.board_id,
+        name=d.name,
+        color=d.color,
+        position=await _key_in(ctx.db, Status, scope, d.after_id, d.before_id),
+        field_meta={},
+    )
+    ctx.stamp(status, _STATUS_FIELDS, seq)
+    ctx.db.add(status)
+    await ctx.db.flush()
+    return {"_seq": seq, "status": status_out(status)}
+
+
+async def _status_update(ctx: _Ctx, op: StatusUpdate):
+    """Rename / recolour: last write wins."""
+    status = await _status(ctx, op.data.id)
+    fields = op.data.model_dump(exclude_none=True, exclude={"id"})
+    await ctx.undo_check(status.field_meta, list(fields), status_out(status))
+    if "name" in fields and await _name_taken(ctx, fields["name"], exclude=status.id):
+        raise Reject("validation", f"a column named {fields['name']!r} already exists")
+    seq, _ = await ctx.next_seq()
+    for name, value in fields.items():
+        setattr(status, name, value)
+    ctx.stamp(status, list(fields), seq)
+    await ctx.db.flush()
+    return {"_seq": seq, "status": status_out(status)}
+
+
+async def _status_move(ctx: _Ctx, op: StatusMove):
+    status = await _status(ctx, op.data.id)
+    await ctx.undo_check(status.field_meta, ["position"], status_out(status))
+    seq, _ = await ctx.next_seq()
+    scope = _board_statuses(ctx.board_id, exclude=status.id)
+    status.position = await _key_in(ctx.db, Status, scope, op.data.after_id, op.data.before_id)
+    ctx.stamp(status, ["position"], seq)
+    await ctx.db.flush()
+    return {"_seq": seq, "status": status_out(status)}
+
+
+async def _status_delete(ctx: _Ctx, op: StatusDelete):
+    """Plan §2: rejected while the column has live cards. Its soft-deleted cards are purged
+    in the same transaction (undoing their deletion then gets `gone`), so with ON DELETE
+    RESTRICT nothing ever points at a missing column."""
+    db = ctx.db
+    status = await _status(ctx, op.data.id)
+    await ctx.undo_check(status.field_meta, _STATUS_FIELDS, status_out(status))
+    live = await db.scalar(select(func.count()).where(*_column(ctx.board_id, status.id)))
+    if live:
+        raise Reject("validation", f"column {status.name!r} is not empty", status_out(status))
+    seq, _ = await ctx.next_seq()
+    purged = (
+        await db.scalars(
+            delete(Card)
+            .where(Card.board_id == ctx.board_id, Card.status_id == status.id)
+            .returning(Card.id)
+        )
+    ).all()  # their children go with them (ON DELETE CASCADE)
+    await db.delete(status)
+    await db.flush()
+    return {"_seq": seq, "id": str(status.id), "purged_ids": [str(i) for i in purged]}

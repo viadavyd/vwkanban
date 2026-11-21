@@ -48,6 +48,7 @@ class StatusOut(BaseModel):
     name: str
     color: str
     position: str
+    field_meta: dict
 
 
 class CardOut(BaseModel):
