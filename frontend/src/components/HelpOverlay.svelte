@@ -62,7 +62,7 @@
     vertical-align: top;
   }
   .keys {
-    width: 9rem;
+    padding-right: 1.5rem;
     white-space: nowrap;
   }
   kbd {

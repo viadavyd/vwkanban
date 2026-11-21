@@ -141,17 +141,18 @@
 
   async function confirmDelete(board: BoardItem) {
     overlay = null;
+    // Optimistic: the tile goes at once, so the next key already acts on its neighbour.
+    const i = boards.findIndex((b) => b.id === board.id);
+    if (i < 0) return;
+    boards.splice(i, 1);
+    if (selectedId === board.id) selectedId = boards[Math.min(i, boards.length - 1)]?.id;
     try {
       await deleteBoard(board.id);
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 404)) {
-        message = fail(e);
-        return;
-      }
+      if (e instanceof ApiError && e.status === 404) return; // already gone
+      message = fail(e);
+      boards.splice(Math.min(i, boards.length), 0, board);
     }
-    const i = boards.findIndex((b) => b.id === board.id);
-    boards = boards.filter((b) => b.id !== board.id);
-    if (selectedId === board.id) selectedId = boards[Math.min(i, boards.length - 1)]?.id;
   }
 
   async function confirmLogout() {
