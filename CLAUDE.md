@@ -20,15 +20,16 @@ A fast, keyboard-first (vim-style), open-source web kanban. It should deploy wit
 backend/vwkanban/{auth,boards,sync,csvio}, backend/migrations, backend/tests/{unit,api,ws,csv};
 frontend/src/{lib/{api,sync,keys,editor},routes,components}, frontend/{tests,e2e}; docker/; compose.yaml; scripts/
 
-## Commands (available once M0 is done)
+## Commands
 - Run all: `cp .env.example .env && docker compose up -d` (build locally: `docker compose up -d --build`)
-- Backend dev: `cd backend && uv sync && uv run uvicorn vwkanban.main:app --reload`
-- Frontend dev: `cd frontend && npm ci && npm run dev` (proxies /api to :8000)
-- Test: `cd backend && uv run pytest` · `cd frontend && npm test && npx playwright test`
-- Perf: `make perf` (enforced on the reference machine; report-only in CI)
-- Lint/format: `uv run ruff check --fix . && uv run ruff format .` · `npm run check && npm run format` · `pre-commit run -a`
+- Local Postgres for backend dev/tests: `scripts/dev-db.sh` (throwaway container on 127.0.0.1:5432; tests read `DATABASE_URL`, defaulting to it)
+- Backend dev: `cd backend && uv sync && DATABASE_URL=postgresql+asyncpg://vwkanban:vwkanban@127.0.0.1:5432/vwkanban uv run uvicorn vwkanban.main:app --reload`
+- Frontend dev (Node 22): `cd frontend && npm ci && npm run dev` (proxies /api to :8000)
+- Test: `cd backend && uv run pytest` · `cd frontend && npm test && npx playwright test` (one-time: `npx playwright install chromium`; until M5 Playwright runs only the vim spike, `e2e/spike.spec.ts`)
+- Perf (from M7): `make perf` (enforced on the reference machine; report-only in CI)
+- Lint/format: `uv run ruff check --fix . && uv run ruff format .` · `npm run check && npm run format` · `pre-commit run -a` (one-time: `uv tool install pre-commit`; run `npm ci` first, the prettier hook uses `frontend/node_modules`)
 - Migrate: `uv run alembic revision --autogenerate -m "..."` then `uv run alembic upgrade head` (the app container runs `upgrade head` on start)
-- Users: `docker compose exec app vwk user create <name>`
+- Users (from M1): `docker compose exec app vwk user create <name>`
 
 ## Conventions
 - Every board mutation goes through `apply_op`; never write cards/statuses from a route directly.
