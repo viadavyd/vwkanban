@@ -5,6 +5,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Extra fields of the error object, e.g. an op reject's `op_id` and `current`. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,7 +41,8 @@ async function toError(res: Response): Promise<ApiError> {
     const data = await res.json();
     const err = data?.error;
     if (err && typeof err.code === "string") {
-      return new ApiError(res.status, err.code, String(err.message ?? err.code));
+      const { code, message, ...details } = err;
+      return new ApiError(res.status, code, String(message ?? code), details);
     }
   } catch {
     // not JSON (e.g. an nginx error page)

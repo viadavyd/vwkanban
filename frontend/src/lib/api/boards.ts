@@ -1,4 +1,5 @@
 import { request } from "./client";
+import type { Ack, Op } from "../sync/ops";
 
 export interface StatusCount {
   name: string;
@@ -14,11 +15,42 @@ export interface BoardItem {
   summary: { total: number; done: number; by_status: StatusCount[] };
 }
 
+export interface Status {
+  id: string;
+  name: string;
+  color: string;
+  position: string;
+}
+
+export interface FieldStamp {
+  seq: number;
+  client: string;
+}
+
+export interface Card {
+  id: string;
+  /** Board-local number (#12); 0 while an optimistic create is unconfirmed. */
+  number: number;
+  status_id: string | null;
+  parent_card_id: string | null;
+  /** Fractional key, computed by the server only; "" while unconfirmed. */
+  position: string;
+  title: string;
+  description: string;
+  is_done: boolean;
+  tags: string[];
+  /** Due date, YYYY-MM-DD. */
+  date: string | null;
+  field_meta: Record<string, FieldStamp>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BoardDetail {
   board: { id: string; title: string; created_by: string; created_at: string; updated_at: string };
   seq: number;
-  statuses: { id: string; name: string; color: string; position: string }[];
-  cards: unknown[];
+  statuses: Status[];
+  cards: Card[];
   members: { user_id: string; username: string; role: "owner" | "editor" }[];
 }
 
@@ -32,3 +64,8 @@ export const renameBoard = (id: string, title: string) =>
 export const deleteBoard = (id: string) => request<void>("DELETE", `/boards/${id}`);
 
 export const getBoard = (id: string) => request<BoardDetail>("GET", `/boards/${id}`);
+
+/** Sends one op (plan §3.2). Resolves with the ack; a reject throws ApiError whose
+ * `details.current` is the entity's server state (or null). */
+export const postOp = (boardId: string, clientId: string, op: Op) =>
+  request<Ack>("POST", `/boards/${boardId}/ops`, { client_id: clientId, op });
