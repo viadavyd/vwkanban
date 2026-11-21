@@ -71,6 +71,41 @@ jobs:
       - run: docker compose up -d --build --wait --wait-timeout 180
       - run: curl -fsS http://vwk.test/api/healthz | tee /dev/stderr | grep -q '"status":"ok"'
       - run: curl -fsS http://vwk.test/ | grep -q '<div id="app">'
+      # Login is rate-limited to 5/min per IP: the curl login and the e2e use 3 of them.
+      - name: Log in over plain HTTP (cookie without Secure)
+        run: |
+          set -eu
+          . ./.env
+          curl -fsS -D headers.txt -c jar.txt -o /dev/null \
+            -H 'Origin: http://vwk.test' -H 'Content-Type: application/json' \
+            -d "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
+            http://vwk.test/api/auth/login
+          cookie=$(grep -i '^set-cookie: vwk_session=' headers.txt)
+          echo "$cookie" | grep -qi 'httponly'
+          if echo "$cookie" | grep -qi 'secure'; then echo "cookie is Secure over http" >&2; exit 1; fi
+          curl -fsS -b jar.txt http://vwk.test/api/auth/me | tee /dev/stderr | grep -q "\"username\":\"$ADMIN_USERNAME\""
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22.23.5"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: E2E keyboard-only login
+        working-directory: frontend
+        run: |
+          set -eu
+          npm ci
+          npx playwright install --with-deps chromium
+          set -a; . ../.env; set +a
+          VWK_BASE_URL=http://vwk.test npm run e2e:app
+      - name: Login rate limit returns 429
+        run: |
+          codes=$(for i in 1 2 3 4 5 6 7; do
+            curl -s -o /dev/null -w '%{http_code} ' -H 'Origin: http://vwk.test' \
+              -H 'Content-Type: application/json' -d '{"username":"x","password":"y"}' \
+              http://vwk.test/api/auth/login
+          done)
+          echo "$codes"
+          echo "$codes" | grep -q 429
       - if: failure()
         run: docker compose logs
       - if: always()

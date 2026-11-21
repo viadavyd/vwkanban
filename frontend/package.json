@@ -12,7 +12,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "spike:build": "vite build --mode spike && node scripts/spike-size.mjs",
-    "spike:e2e": "playwright test"
+    "spike:e2e": "playwright test",
+    "e2e:app": "playwright test -c playwright.app.config.ts"
   },
   "devDependencies": {
     "@codemirror/commands": "6.11.1",
