@@ -4,6 +4,7 @@
   import {
     bindingsFor,
     displayKey,
+    EX_COMMANDS,
     MODE_LABEL,
     PREFIX,
     SUBMODES,
@@ -36,6 +37,18 @@
               <td>{b.help}</td>
             </tr>
           {/each}
+          {#if m === "field"}
+            {#each EX_COMMANDS as c (c.name)}
+              <tr>
+                <td class="keys"><kbd>:{c.short}</kbd></td>
+                <td>{c.help}</td>
+              </tr>
+              <tr>
+                <td class="keys"><kbd>:{c.short}!</kbd></td>
+                <td>{c.bangHelp}</td>
+              </tr>
+            {/each}
+          {/if}
         </tbody>
       </table>
     {/each}

@@ -1,5 +1,6 @@
-// Pure decision logic for the FIELD-mode Esc/Ctrl+C bridge (plan §4.2).
-// No CodeMirror imports here: this file is in the entry chunk and unit-tested.
+// Pure decision logic for the FIELD-mode Esc/Ctrl+C bridge (plan §4.2), shared by the
+// app (lib/editor/vim.ts) and the M0 spike. No CodeMirror imports: it is in the entry
+// chunk and unit-tested.
 
 export interface VimSnapshot {
   insertMode: boolean;

@@ -2,7 +2,7 @@
 import { EditorState, type Transaction, type TransactionSpec } from "@codemirror/state";
 import { EditorView, drawSelection } from "@codemirror/view";
 import { Vim, getCM, vim } from "@replit/codemirror-vim";
-import { snapshotVim, type VimSnapshot } from "./bridge";
+import { snapshotVim, type VimSnapshot } from "../lib/editor/bridge";
 
 export interface ExCall {
   command: "write" | "edit";
