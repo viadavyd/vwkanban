@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Tiny history router: /login, / (dashboard) and /b/:id (board; a stub until M3a).
+  // Tiny history router: /login, / (dashboard) and /b/:id (board).
   import { getAuthConfig, me, type User } from "./lib/api/auth";
   import { installKeys } from "./lib/keys/dispatch";
-  import BoardStub from "./routes/BoardStub.svelte";
+  import Board from "./routes/Board.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
   import Login from "./routes/Login.svelte";
 
@@ -83,7 +83,7 @@
   <Login {signupEnabled} {onLoggedIn} />
 {:else if boardId}
   {#key boardId}
-    <BoardStub id={boardId} {user} onback={backToDashboard} onloggedout={onLoggedOut} />
+    <Board id={boardId} {user} onback={backToDashboard} onloggedout={onLoggedOut} />
   {/key}
 {:else}
   <Dashboard {user} initialSelected={lastBoardId} onopen={openBoard} onloggedout={onLoggedOut} />

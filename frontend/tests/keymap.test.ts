@@ -59,6 +59,11 @@ describe("keymap", () => {
     expect(keys.sort()).toEqual(["?", "Enter", "Q", "a", "d", "h", "j", "k", "l", "r"].sort());
   });
 
+  it("binds the M3a board keys", () => {
+    const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
+    expect(keys.sort()).toEqual(["?", "C-c", "Esc", "h", "j", "k", "l"].sort());
+  });
+
   it("names keys", () => {
     expect(keyName(ev("j"))).toBe("j");
     expect(keyName(ev("Q"))).toBe("Q");
