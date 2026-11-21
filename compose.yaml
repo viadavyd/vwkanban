@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ghcr.io/${VWK_IMAGE_OWNER:-vwkanban}/vwkanban-app:${VWK_VERSION:-latest}
+    image: ghcr.io/${VWK_IMAGE_OWNER:-viadavyd}/vwkanban-app:${VWK_VERSION:-latest}
     build:
       context: backend
       dockerfile: ../docker/app.Dockerfile
@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/${VWK_IMAGE_OWNER:-vwkanban}/vwkanban-web:${VWK_VERSION:-latest}
+    image: ghcr.io/${VWK_IMAGE_OWNER:-viadavyd}/vwkanban-web:${VWK_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/web.Dockerfile
