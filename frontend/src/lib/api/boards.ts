@@ -1,4 +1,4 @@
-import { request } from "./client";
+import { request, requestRaw } from "./client";
 
 export interface StatusCount {
   name: string;
@@ -82,3 +82,36 @@ export const addMember = (boardId: string, username: string) =>
 /** Removes a member (owner only); their open sockets on the board are closed. */
 export const removeMember = (boardId: string, userId: string) =>
   request<void>("DELETE", `/boards/${boardId}/members/${userId}`);
+
+// --- CSV (plan §3.1, §3.6) ------------------------------------------------------------
+
+/** The server refuses larger files; checked here first so nothing is uploaded. */
+export const CSV_MAX_BYTES = 5 * 1024 * 1024;
+
+/** The export download (`E`): a plain GET, so the browser saves it with its filename. */
+export const exportUrl = (boardId: string) => `/api/boards/${boardId}/export.csv`;
+
+export interface ImportResult {
+  created: number;
+  /** names of the columns the import adds */
+  statuses_created: string[];
+  /** "kept": the CSV ids are the card numbers; else every card gets a new one */
+  numbers: "kept" | "renumbered";
+  warnings: string[];
+  /** the board.import event's seq; null on a dry run */
+  seq: number | null;
+}
+
+/** One bad row of a refused import (ApiError.details.rows). */
+export interface ImportRowError {
+  row: number;
+  message: string;
+}
+
+/** Imports a CSV file (`I`). `dryRun` validates and counts without writing (the preview).
+ * A refused file is an ApiError with `details.rows`. */
+export const importCsv = (boardId: string, file: Blob, clientId: string, dryRun: boolean) => {
+  const q = new URLSearchParams({ client_id: clientId });
+  if (dryRun) q.set("dry_run", "1");
+  return requestRaw<ImportResult>("POST", `/boards/${boardId}/import?${q}`, file, "text/csv");
+};

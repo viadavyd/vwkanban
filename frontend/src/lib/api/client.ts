@@ -16,10 +16,20 @@ export class ApiError extends Error {
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
 export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+  if (body === undefined) return send<T>(method, path);
+  return send<T>(method, path, JSON.stringify(body), "application/json");
+}
+
+/** A request whose body is sent as is (e.g. a CSV file as `text/csv`). */
+export function requestRaw<T>(method: Method, path: string, body: Blob, type: string): Promise<T> {
+  return send<T>(method, path, body, type);
+}
+
+async function send<T>(method: Method, path: string, body?: BodyInit, type?: string): Promise<T> {
   const init: RequestInit = { method, credentials: "same-origin", headers: {} };
   if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    (init.headers as Record<string, string>)["Content-Type"] = "application/json";
+    init.body = body;
+    (init.headers as Record<string, string>)["Content-Type"] = type!;
   }
   let res: Response;
   try {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { me } from "../src/lib/api/auth";
+import { importCsv } from "../src/lib/api/boards";
 import { ApiError, request } from "../src/lib/api/client";
 
 function stubFetch(status: number, body: unknown, json = true) {
@@ -37,5 +38,22 @@ describe("api client", () => {
   it("me() returns null on 401", async () => {
     stubFetch(401, { error: { code: "unauthenticated", message: "not logged in" } });
     expect(await me()).toBeNull();
+  });
+
+  it("uploads a CSV as a raw text/csv body, with the dry-run flag", async () => {
+    stubFetch(200, { created: 1, statuses_created: [], numbers: "kept", warnings: [], seq: null });
+    const file = new Blob(["title\r\nx\r\n"]);
+    await importCsv("b1", file, "tab-1", true);
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe("/api/boards/b1/import?client_id=tab-1&dry_run=1");
+    expect(init).toMatchObject({ method: "POST", body: file });
+    expect(init!.headers).toEqual({ "Content-Type": "text/csv" });
+  });
+
+  it("keeps a refused import's row errors in details", async () => {
+    const rows = [{ row: 3, message: "date 'x' is not YYYY-MM-DD" }];
+    stubFetch(422, { error: { code: "validation", message: "nothing imported", rows } });
+    const err = (await importCsv("b1", new Blob([""]), "t", false).catch((e) => e)) as ApiError;
+    expect(err.details.rows).toEqual(rows);
   });
 });

@@ -117,6 +117,21 @@ jobs:
           upgrade http://vwk.test | head -1 | tee /dev/stderr | grep -q '^HTTP/1.1 101'
           upgrade http://evil.test | od -An -tx1 | tr -d ' \n' | tee /dev/stderr | grep -q '88021130$'
           curl -fsS -b jar.txt -X DELETE -H 'Origin: http://vwk.test' "http://vwk.test/api/boards/$board"
+      # Upload limit: the app's JSON 413 past 5 MB, and nginx's (same envelope) past 6 MB.
+      - name: CSV upload limits through nginx
+        run: |
+          set -eu
+          board=$(curl -fsS -b jar.txt -H 'Origin: http://vwk.test' -H 'Content-Type: application/json' \
+            -d '{"title":"csv smoke"}' http://vwk.test/api/boards | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          for mb in 5.5 7; do
+            python3 -c "import sys; sys.stdout.write('title\r\n' + 'x' * int($mb * 1024 * 1024))" > big.csv
+            code=$(curl -s -o out.json -w '%{http_code}' -b jar.txt -H 'Origin: http://vwk.test' \
+              -H 'Content-Type: text/csv' --data-binary @big.csv "http://vwk.test/api/boards/$board/import")
+            cat out.json >&2; echo >&2
+            test "$code" = 413
+            grep -q '"message":"file is larger than 5 MB"' out.json
+          done
+          curl -fsS -b jar.txt -X DELETE -H 'Origin: http://vwk.test' "http://vwk.test/api/boards/$board"
       - name: Create the second e2e user (two-user real-time specs)
         run: |
           set -eu

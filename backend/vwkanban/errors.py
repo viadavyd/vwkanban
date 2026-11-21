@@ -13,6 +13,8 @@ _CODES = {
     405: "not_found",
     409: "conflict",
     410: "gone",
+    413: "validation",
+    415: "validation",
     422: "validation",
 }
 

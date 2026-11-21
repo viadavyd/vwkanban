@@ -31,6 +31,8 @@ export type Action =
   | "undo"
   | "columnPrefix"
   | "members"
+  | "exportCsv"
+  | "importCsv"
   | "columnLeft"
   | "columnRight"
   | "cycleColor"
@@ -104,6 +106,13 @@ export const KEYMAP: readonly Binding[] = [
   { mode: "board", keys: ["H"], action: "columnLeft", help: "move the column left" },
   { mode: "board", keys: ["L"], action: "columnRight", help: "move the column right" },
   { mode: "board", keys: ["M"], action: "members", help: "members of this board" },
+  { mode: "board", keys: ["E"], action: "exportCsv", help: "export the board as CSV" },
+  {
+    mode: "board",
+    keys: ["I"],
+    action: "importCsv",
+    help: "import cards from a CSV file (shows what it adds; y to import)",
+  },
   {
     mode: "board",
     keys: ["Esc", "C-c"],

@@ -68,15 +68,21 @@ describe("keymap", () => {
     expect(keys.sort()).toEqual(["?", "Enter", "Q", "a", "d", "h", "j", "k", "l", "r"].sort());
   });
 
-  it("binds the M3a, M3b and M4 board keys", () => {
+  it("binds the M3a, M3b, M4 and M6 board keys", () => {
     const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(
       [
         ...["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l", "i"],
         ...["y", "p", "x", "u", "s", "H", "L"],
         "M",
+        ...["E", "I"],
       ].sort(),
     );
+  });
+
+  it("binds CSV export and import on the board (M6)", () => {
+    expect(lookup("board", "E")).toBe("exportCsv");
+    expect(lookup("board", "I")).toBe("importCsv");
   });
 
   it("binds the column commands under the s prefix", () => {

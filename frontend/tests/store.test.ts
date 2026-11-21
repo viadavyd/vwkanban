@@ -446,3 +446,75 @@ describe("BoardStore: M5 answers and card-scoped undo", () => {
     expect(server.sent.at(-1)).toMatchObject({ op_id: inv!.op_id, base_seq: 3 });
   });
 });
+
+describe("BoardStore: board.import (CSV)", () => {
+  type Server = ReturnType<typeof setup>["server"];
+  const imported = (server: Server, seq: number, client_id = OTHER) =>
+    server.msg({
+      t: "event",
+      seq,
+      op_id: `imp-${seq}`,
+      client_id,
+      actor: { id: "u", username: "bob" },
+      kind: "board.import",
+      data: { created: 2, statuses_created: [] },
+    });
+
+  it("resyncs at once instead of applying it, and keeps pending ops on top", async () => {
+    const { store, server, hooks, col } = setup();
+    store.submit(setDone(1, "c1", true));
+    imported(server, 2);
+    expect(hooks.load).toHaveBeenCalledTimes(1);
+    expect(hooks.onremote).toHaveBeenCalledWith(expect.objectContaining({ kind: "board.import" }));
+    await flush();
+    expect(store.seq).toBe(9);
+    expect(col()).toEqual(["c1", "c9"]);
+    expect(store.pendingCount).toBe(1);
+    expect(store.view.columns.get(TODO.id)![0].is_done).toBe(true); // still optimistic
+  });
+
+  it("the importer's own tab resyncs too, without a remote notice", async () => {
+    const { store, server, hooks } = setup();
+    imported(server, 2, CLIENT_ID);
+    await flush();
+    expect(hooks.load).toHaveBeenCalledTimes(1);
+    expect(hooks.onremote).not.toHaveBeenCalled();
+    expect(store.seq).toBe(9);
+  });
+
+  it("events after the import apply once the fresh state is in", async () => {
+    const { store, server, hooks, col } = setup();
+    imported(server, 2);
+    server.event(10, remote("card.create"), { card: card("c10", "b0") });
+    await flush();
+    expect(hooks.load).toHaveBeenCalledTimes(1);
+    expect(store.seq).toBe(10);
+    expect(col()).toEqual(["c1", "c9", "c10"]);
+  });
+
+  it("waits in seq order behind a gap like any event", async () => {
+    const { store, server, hooks, timers } = setup();
+    imported(server, 3); // 2 is missing
+    expect(hooks.load).not.toHaveBeenCalled();
+    server.event(2, remote("card.create"), { card: card("c2", "a2") });
+    expect(hooks.load).toHaveBeenCalledTimes(1); // 2 applied, the import is next
+    await flush();
+    expect(store.seq).toBe(9);
+    expect(timers).toHaveLength(1);
+  });
+
+  it("loads again when a resync already on its way predates the import", async () => {
+    const { store, server, hooks } = setup();
+    let release!: () => void;
+    hooks.load.mockImplementationOnce(
+      () => new Promise((r) => (release = () => r(detail(1, [card("c1", "a0")])))),
+    );
+    server.msg({ t: "resync" }); // load #1 starts (it will return the old seq 1)
+    imported(server, 2); // asks for a resync while #1 is on its way
+    release();
+    await flush();
+    await flush();
+    expect(hooks.load).toHaveBeenCalledTimes(2); // #2 returns seq 9, past the import
+    expect(store.seq).toBe(9);
+  });
+});
