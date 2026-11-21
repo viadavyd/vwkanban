@@ -293,5 +293,5 @@ async def test_oversized_message_closes(ws):
     alice = await ws.user("alice")
     board, (todo, *_) = await ws.board(alice)
     a = await ws.connect(alice, board)
-    await a.send({"t": "ping", "pad": "x" * 70_000})
+    await a.send({"t": "ping", "pad": "x" * 140_000})
     assert await a.closed() == 1009

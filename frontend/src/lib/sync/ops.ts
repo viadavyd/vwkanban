@@ -22,10 +22,25 @@ export interface Neighbours {
   before_id?: string;
 }
 
+/** A top-level card (`status_id`, with pasted `children`) or a child (`parent_id`; its
+ * neighbours are siblings). Exactly one of the two is set. */
 export interface CardCreateData extends ChildData, Neighbours {
-  status_id: string;
+  status_id?: string;
+  parent_id?: string;
   children?: ChildData[];
 }
+
+/** The fields a card.update writes (only the keys present). Text fields are checked
+ * against the op's base_seq on the server; is_done is last write wins. */
+export interface CardFields {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  date?: string | null;
+  is_done?: boolean;
+}
+
+export type TextField = "title" | "description" | "tags" | "date";
 
 interface OpBase {
   op_id: string;
@@ -36,7 +51,7 @@ interface OpBase {
 
 export type Op =
   | (OpBase & { kind: "card.create"; data: CardCreateData })
-  | (OpBase & { kind: "card.update"; data: { id: string; fields: { is_done: boolean } } })
+  | (OpBase & { kind: "card.update"; data: { id: string; fields: CardFields } })
   | (OpBase & { kind: "card.delete"; data: { id: string } })
   | (OpBase & { kind: "card.move"; data: { id: string; status_id: string } & Neighbours })
   | (OpBase & { kind: "card.restore"; data: { id: string } })
@@ -87,6 +102,8 @@ export interface BoardView {
   columns: Map<string, Card[]>;
   /** parent id → its live children (for the n/m badge) */
   children: Map<string, ChildCount>;
+  /** parent id → its live children in order (the card view's checklist) */
+  kids: Map<string, Card[]>;
   /** ids of cards with an unconfirmed create */
   pending: Set<string>;
 }
@@ -100,7 +117,27 @@ export function createCard(seq: number, data: Omit<CardCreateData, "id">, id = u
 }
 
 export function setDone(seq: number, id: string, isDone: boolean): Op {
-  return { ...base(seq), kind: "card.update", data: { id, fields: { is_done: isDone } } };
+  return updateCard(seq, id, { is_done: isDone });
+}
+
+/** `baseSeq`: for text fields, the seq frozen when the field was entered (plan §3.2). */
+export function updateCard(baseSeq: number, id: string, fields: CardFields): Op {
+  return { ...base(baseSeq), kind: "card.update", data: { id, fields } };
+}
+
+/** `o` / `O` in card mode: a child next to a sibling (or at the end). */
+export function createChild(
+  seq: number,
+  parentId: string,
+  title: string,
+  at: Neighbours = {},
+  id = uuid7(),
+): Op {
+  return {
+    ...base(seq),
+    kind: "card.create",
+    data: { id, parent_id: parentId, title, ...defined(at) },
+  };
 }
 
 export function deleteCard(seq: number, id: string): Op {
@@ -164,8 +201,13 @@ function inverseOp(op: Op, view: BoardView): Op | null {
     case "card.create":
       return deleteCard(0, op.data.id);
     case "card.update": {
-      const hit = findCard(view.columns, op.data.id);
-      return hit && setDone(0, op.data.id, hit[0][hit[1]].is_done);
+      const old = cardById(view, op.data.id);
+      if (!old) return null;
+      const back: CardFields = {};
+      for (const f of Object.keys(op.data.fields) as (keyof CardFields)[]) {
+        (back as Record<string, unknown>)[f] = f === "tags" ? [...old.tags] : old[f];
+      }
+      return updateCard(0, op.data.id, back);
     }
     case "card.move": {
       const hit = findCard(view.columns, op.data.id);
@@ -230,12 +272,12 @@ export function applyEvent(state: Confirmed, ev: BoardEvent): void {
 
 // --- view ----------------------------------------------------------------------------
 
-function placeholder(d: CardCreateData): Card {
+function placeholder(d: ChildData, place: { status_id?: string; parent_id?: string }): Card {
   return {
     id: d.id,
     number: 0,
-    status_id: d.status_id,
-    parent_card_id: null,
+    status_id: place.status_id ?? null,
+    parent_card_id: place.parent_id ?? null,
     position: "",
     title: d.title,
     description: d.description ?? "",
@@ -256,6 +298,17 @@ function findCard(columns: Map<string, Card[]>, id: string): [Card[], number] | 
   return null;
 }
 
+/** A top-level card or a child, wherever it is in the view. */
+function findAny(view: BoardView, id: string): [Card[], number] | null {
+  return findCard(view.columns, id) ?? findCard(view.kids, id);
+}
+
+/** A live card (top-level or child) in the view. */
+export function cardById(view: BoardView, id: string): Card | undefined {
+  const hit = findAny(view, id);
+  return hit ? hit[0][hit[1]] : undefined;
+}
+
 /** Inserts by the server's neighbour rule: after `after_id`, else before `before_id`, else
  * at the end. */
 function insert<T extends { id: string }>(list: T[], item: T, at: Neighbours): void {
@@ -273,25 +326,37 @@ export function applyOptimistic(view: BoardView, op: Op): void {
   switch (op.kind) {
     case "card.create": {
       const d = op.data;
-      const col = view.columns.get(d.status_id);
-      if (!col || findCard(view.columns, d.id)) return;
-      insert(col, placeholder(d), d);
+      if (findAny(view, d.id)) return;
+      if (d.parent_id) {
+        // A child: only while its parent is on the board.
+        if (!findCard(view.columns, d.parent_id)) return;
+        const kids = view.kids.get(d.parent_id) ?? [];
+        view.kids.set(d.parent_id, kids);
+        insert(kids, placeholder(d, { parent_id: d.parent_id }), d);
+        view.pending.add(d.id);
+        return;
+      }
+      const col = d.status_id ? view.columns.get(d.status_id) : undefined;
+      if (!col) return;
+      insert(col, placeholder(d, { status_id: d.status_id }), d);
       view.pending.add(d.id);
       if (d.children?.length) {
-        const done = d.children.filter((c) => c.is_done).length;
-        view.children.set(d.id, { done, total: d.children.length });
+        view.kids.set(
+          d.id,
+          d.children.map((c) => placeholder(c, { parent_id: d.id })),
+        );
       }
       return;
     }
     case "card.update": {
-      const hit = findCard(view.columns, op.data.id);
+      const hit = findAny(view, op.data.id);
       if (hit) hit[0][hit[1]] = { ...hit[0][hit[1]], ...op.data.fields };
       return;
     }
     case "card.delete": {
-      const hit = findCard(view.columns, op.data.id);
+      const hit = findAny(view, op.data.id);
       if (hit) hit[0].splice(hit[1], 1);
-      view.children.delete(op.data.id);
+      view.kids.delete(op.data.id);
       return;
     }
     case "card.move": {
@@ -340,26 +405,32 @@ export function applyOptimistic(view: BoardView, op: Op): void {
 
 export function buildView(state: Confirmed, pending: readonly Op[]): BoardView {
   const columns = new Map<string, Card[]>(state.statuses.map((s) => [s.id, []]));
-  const children = new Map<string, ChildCount>();
+  const kids = new Map<string, Card[]>();
   for (const c of state.cards.values()) {
     if (c.parent_card_id) {
-      const n = children.get(c.parent_card_id) ?? { done: 0, total: 0 };
-      n.total += 1;
-      if (c.is_done) n.done += 1;
-      children.set(c.parent_card_id, n);
+      const list = kids.get(c.parent_card_id);
+      if (list) list.push(c);
+      else kids.set(c.parent_card_id, [c]);
     } else if (c.status_id) {
       columns.get(c.status_id)?.push(c);
     }
   }
   for (const col of columns.values()) col.sort(byPosition);
+  for (const list of kids.values()) list.sort(byPosition);
   const view: BoardView = {
     seq: state.seq,
     statuses: state.statuses,
     columns,
-    children,
+    children: new Map(),
+    kids,
     pending: new Set(),
   };
   for (const op of pending) applyOptimistic(view, op);
+  for (const [parent, list] of view.kids) {
+    if (!list.length) continue;
+    const done = list.filter((c) => c.is_done).length;
+    view.children.set(parent, { done, total: list.length });
+  }
   return view;
 }
 

@@ -2,7 +2,8 @@
 
 M3a: card.create (top-level), card.update (is_done), card.delete.
 M3b: card.move, card.restore, pasted children on card.create, `undo`, status.*.
-Text-field updates and child create/reorder arrive in M5.
+M5: text-field updates (with the base_seq conflict check) and child create (`parent_id`).
+Child reorder is deferred after the MVP.
 """
 
 import datetime as dt
@@ -43,15 +44,54 @@ class ChildData(_Strict):
     is_done: bool = False
 
 
+# Tags on one card (each 1..30 chars, no ';').
+MAX_TAGS = 50
+
+
 class CardCreateData(ChildData):
-    status_id: uuid.UUID
+    """A top-level card (`status_id`, optionally with pasted `children`) or a child
+    (`parent_id`; neighbours are its siblings)."""
+
+    status_id: uuid.UUID | None = None
+    parent_id: uuid.UUID | None = None
     after_id: uuid.UUID | None = None
     before_id: uuid.UUID | None = None
     children: list[ChildData] = Field(default=[], max_length=MAX_PASTED_CHILDREN)
 
+    @model_validator(mode="after")
+    def _one_place(self):
+        if (self.status_id is None) == (self.parent_id is None):
+            raise ValueError("exactly one of status_id and parent_id is required")
+        if self.parent_id is not None and self.children:
+            raise ValueError("a child card can't have children (depth 1)")
+        return self
+
+
+# Text fields: a write is refused (`conflict`) if another client wrote the field after the
+# op's base_seq (plan §3.2). is_done is last write wins.
+TEXT_FIELDS = ("title", "description", "tags", "date")
+
 
 class CardFields(_Strict):
-    is_done: bool  # text fields (with their conflict check) arrive in M5
+    """Only the keys sent are written (`date: null` clears the due date)."""
+
+    title: CardTitle | None = None
+    description: str | None = Field(default=None, max_length=CARD_DESCRIPTION_MAX)
+    tags: list[Tag] | None = Field(default=None, max_length=MAX_TAGS)
+    date: dt.date | None = None
+    is_done: bool | None = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        sent = self.model_fields_set
+        if not sent:
+            raise ValueError("at least one field is required")
+        for f in ("title", "description", "tags", "is_done"):
+            if f in sent and getattr(self, f) is None:
+                raise ValueError(f"{f} can't be null")
+        if self.tags is not None and len(set(self.tags)) != len(self.tags):
+            raise ValueError("tags must be distinct")
+        return self
 
 
 class CardUpdateData(_Strict):

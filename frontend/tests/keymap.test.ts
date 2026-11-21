@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EX_COMMANDS,
   KEYMAP,
   keyName,
   lookup,
@@ -71,7 +72,7 @@ describe("keymap", () => {
     const keys = KEYMAP.filter((b) => b.mode === "board").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(
       [
-        ...["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l"],
+        ...["?", "A", "C-c", "Esc", "Space", "a", "d", "h", "j", "k", "l", "i"],
         ...["y", "p", "x", "u", "s", "H", "L"],
         "M",
       ].sort(),
@@ -90,6 +91,26 @@ describe("keymap", () => {
     expect(lookup("board", "M")).toBe("members");
     const keys = KEYMAP.filter((b) => b.mode === "members").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(["C-c", "Esc", "a", "d", "j", "k"].sort());
+  });
+
+  it("binds card mode (M5) and only the way back in a field", () => {
+    expect(lookup("board", "i")).toBe("open");
+    const card = KEYMAP.filter((b) => b.mode === "card").flatMap((b) => b.keys);
+    expect(card.sort()).toEqual(
+      ["?", "C-c", "Esc", "O", "Space", "a", "d", "i", "j", "k", "o", "u"].sort(),
+    );
+    const field = KEYMAP.filter((b) => b.mode === "field").flatMap((b) => b.keys);
+    expect(field.sort()).toEqual(["C-c", "Esc"]);
+    expect(SUBMODES.card).toEqual(["field"]);
+  });
+
+  it("documents the ex commands (:w, :e) with and without !", () => {
+    expect(EX_COMMANDS.map((c) => c.short)).toEqual(["w", "e"]);
+    for (const c of EX_COMMANDS) {
+      expect(c.name.startsWith(c.short)).toBe(true);
+      expect(c.help.trim()).not.toBe("");
+      expect(c.bangHelp.trim()).not.toBe("");
+    }
   });
 
   it("names keys", () => {

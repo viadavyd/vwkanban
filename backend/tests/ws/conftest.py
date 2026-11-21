@@ -65,7 +65,7 @@ def server(database_url: str) -> Server:
             "--port",
             str(port),
             "--ws-max-size",
-            "65536",
+            "131072",
             "--log-level",
             "warning",
         ],
@@ -187,7 +187,8 @@ class WsClient:
         return op_id
 
     async def send(self, msg: dict) -> None:
-        await self.conn.send(json.dumps(msg))
+        # Raw UTF-8, as browsers send it (JSON.stringify doesn't escape non-ASCII).
+        await self.conn.send(json.dumps(msg, ensure_ascii=False))
 
     async def closed(self) -> int | None:
         """Waits for the server to close the socket; returns the close code."""
@@ -275,3 +276,14 @@ async def ws(server, engine) -> AsyncIterator[Harness]:
     h = Harness(server, engine)
     yield h
     await h.aclose()
+
+
+@pytest.fixture
+async def ab(ws):
+    """Alice (owner) and bob (editor) on one board, each with a live socket."""
+    alice = await ws.user("alice")
+    bob = await ws.user("bob")
+    board, statuses = await ws.board(alice, bob)
+    a = await ws.connect(alice, board)
+    b = await ws.connect(bob, board)
+    return ws, alice, bob, board, statuses, a, b

@@ -7,6 +7,7 @@ import {
   deleteStatus,
   moveCard,
   setDone,
+  updateCard,
   type BoardEvent,
   type Op,
 } from "../src/lib/sync/ops";
@@ -403,5 +404,45 @@ describe("BoardStore: snapshots", () => {
       card("k1", "a0", { status_id: null, parent_card_id: "c1" }),
     ]);
     expect(store.childrenOf("c1").map((c) => c.id)).toEqual(["k1", "k2"]);
+  });
+});
+
+describe("BoardStore: M5 answers and card-scoped undo", () => {
+  it("resolves submit() with the ack's seq, or with the reject", async () => {
+    const { store, server } = setup();
+    const edit = updateCard(1, "c1", { description: "mine" });
+    const answer = store.submit(edit);
+    server.answer(edit, 2, { card: card("c1", "a0", { description: "mine" }) });
+    expect(await answer).toEqual({ ok: true, seq: 2 });
+
+    const stale = updateCard(1, "c1", { description: "late" });
+    const refused = store.submit(stale);
+    const current = card("c1", "a0", { description: "theirs" });
+    server.reject(stale, "conflict", "#1's description was changed by bob", current);
+    expect(await refused).toEqual({
+      ok: false,
+      code: "conflict",
+      message: "#1's description was changed by bob",
+      current,
+    });
+    // The view shows the server's value; the draft is the field's business.
+    expect(store.view.columns.get(TODO.id)![0].description).toBe("theirs");
+  });
+
+  it("undoes the newest op only if the filter accepts it", async () => {
+    const { store, server } = setup([card("c1", "a0"), card("c2", "a1")]);
+    const a = setDone(1, "c1", true);
+    const b = setDone(1, "c2", true);
+    store.submit(a);
+    store.submit(b);
+    server.answer(a, 2, { card: card("c1", "a0", { is_done: true }) });
+    server.answer(b, 3, { card: card("c2", "a1", { is_done: true }) });
+    const onC1 = (inv: Op) => "id" in inv.data && inv.data.id === "c1";
+    expect(store.undo(onC1)).toBeNull(); // the newest op was on c2
+    expect(store.canUndo).toBe(true);
+    const inv = store.undo((op) => "id" in op.data && op.data.id === "c2");
+    expect(inv).toMatchObject({ kind: "card.update", undo: true, data: { id: "c2" } });
+    await flush();
+    expect(server.sent.at(-1)).toMatchObject({ op_id: inv!.op_id, base_seq: 3 });
   });
 });

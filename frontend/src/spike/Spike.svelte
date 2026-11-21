@@ -1,6 +1,6 @@
 <script lang="ts">
   // Throwaway M0 spike: proves the CodeMirror-vim Esc/Ctrl+C bridge (plan §8 M0).
-  import { isBackKey, shouldLeaveField } from "./bridge";
+  import { isBackKey, shouldLeaveField } from "../lib/editor/bridge";
   import type { ExCall, Field } from "./editor";
 
   type FieldId = "title" | "description";

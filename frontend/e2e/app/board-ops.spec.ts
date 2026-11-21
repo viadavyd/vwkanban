@@ -1,5 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
-import { card, column, expectSelected, expectTitles, ORIGIN, settled, STATE } from "./helpers";
+import {
+  card,
+  column,
+  expectSelected,
+  expectTitles,
+  newCard,
+  ORIGIN,
+  settled,
+  STATE,
+} from "./helpers";
 
 // Keyboard only (no clicks, no fill()): every M3b board key — y p x u, s a/r/c/d, H L —
 // on a fresh board. The one exception is the seed: cards with children can't be made from
@@ -11,15 +20,6 @@ const boardTitle = `M3b e2e ${Date.now()}`;
 const byNumber = (page: Page, n: number) => page.locator(`[data-card][data-number="${n}"]`);
 const columnNames = (page: Page) => page.getByTestId("column").locator("header .name");
 const message = (page: Page) => page.locator("main .message");
-
-async function newCard(page: Page, title: string) {
-  await page.keyboard.press("a");
-  await expect(page.getByLabel("New card title")).toBeFocused();
-  await page.keyboard.type(title);
-  await page.keyboard.press("Enter");
-  await expect(page.getByLabel("New card title")).toHaveCount(0);
-  await expectSelected(page, title);
-}
 
 /** Presses a key that sends an op and waits until the server has answered it (an ack or a
  * reject: what it shows is checked after). */

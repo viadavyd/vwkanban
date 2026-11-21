@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBackKey, shouldLeaveField, snapshotVim, type KeyLike } from "../src/spike/bridge";
+import { isBackKey, shouldLeaveField, snapshotVim, type KeyLike } from "../src/lib/editor/bridge";
 
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({
   key: k,
