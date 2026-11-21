@@ -11,6 +11,7 @@ COPY . .
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13.18-slim
+LABEL org.opencontainers.image.source=https://github.com/viadavyd/vwkanban
 RUN useradd --system --uid 10001 --home /app vwk
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
