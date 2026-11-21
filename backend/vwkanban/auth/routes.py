@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 
 from vwkanban.auth.deps import AppSettings, CurrentUser, Db
 from vwkanban.auth.models import User
-from vwkanban.auth.passwords import hash_password, verify_password
+from vwkanban.auth.passwords import verify_password
 from vwkanban.auth.sessions import (
     COOKIE_NAME,
     clear_session_cookie,
@@ -13,6 +12,7 @@ from vwkanban.auth.sessions import (
     delete_session,
     set_session_cookie,
 )
+from vwkanban.auth.users import create_user
 from vwkanban.auth.validation import PASSWORD_MAX, check_password, normalize_username
 from vwkanban.errors import ApiError
 
@@ -85,16 +85,9 @@ async def signup(
 ) -> UserOut:
     if not settings.allow_signup:
         raise ApiError(404, "not_found", "not found")
-    password_hash = await hash_password(body.password)
-    user_id = await db.scalar(
-        insert(User)
-        .values(username=body.username, password_hash=password_hash)
-        .on_conflict_do_nothing(index_elements=[User.username])
-        .returning(User.id)
-    )
-    if user_id is None:
+    user = await create_user(db, body.username, body.password)
+    if user is None:
         raise ApiError(409, "conflict", "username is taken")
-    user = await db.get_one(User, user_id)
     await _start_session(request, response, db, settings, user)
     return _out(user)
 

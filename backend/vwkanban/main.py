@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from vwkanban.auth.bootstrap import ensure_admin
 from vwkanban.auth.origin import check_origin
 from vwkanban.auth.routes import router as auth_router
 from vwkanban.auth.sessions import purge_expired
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with app.state.sessionmaker() as db:
             await purge_expired(db)
+        await ensure_admin(app.state.sessionmaker, settings)
         yield
         await app.state.engine.dispose()
 
