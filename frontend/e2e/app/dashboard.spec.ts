@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 
 const username = process.env.ADMIN_USERNAME ?? "admin";
 const password = process.env.ADMIN_PASSWORD ?? "change-me-too";
@@ -19,6 +19,23 @@ async function login(page: Page) {
 }
 
 const tile = (page: Page, text: string) => page.getByRole("option").filter({ hasText: text });
+
+/** Resolves with the next `n` board DELETE responses. Deletes are optimistic (the tile goes
+ * before the request finishes), so wait for these before a reload, which would abort them. */
+function boardDeletes(page: Page, n: number) {
+  const seen: { url: string; status: number }[] = [];
+  return new Promise<typeof seen>((resolve) => {
+    const onResponse = (r: Response) => {
+      if (r.request().method() !== "DELETE" || !r.url().includes("/api/boards/")) return;
+      seen.push({ url: r.url(), status: r.status() });
+      if (seen.length === n) {
+        page.off("response", onResponse);
+        resolve(seen);
+      }
+    };
+    page.on("response", onResponse);
+  });
+}
 
 test("keyboard-only dashboard: help, create, open, rename, delete, log out", async ({ page }) => {
   await login(page);
@@ -79,9 +96,11 @@ test("keyboard-only dashboard: help, create, open, rename, delete, log out", asy
   await page.keyboard.press("n");
   await expect(confirm).toBeHidden();
   await expect(tile(page, renamed)).toHaveCount(1);
+  const deleted = boardDeletes(page, 1);
   await page.keyboard.press("d");
   await page.keyboard.press("y");
   await expect(tile(page, renamed)).toHaveCount(0);
+  expect((await deleted)[0].status).toBe(204);
   await page.reload();
   await expect(page.getByTestId("mode")).toHaveText("-- DASHBOARD --");
   await expect(tile(page, renamed)).toHaveCount(0);
@@ -94,11 +113,15 @@ test("keyboard-only dashboard: help, create, open, rename, delete, log out", asy
     await page.keyboard.press("Enter");
     await expect(tile(page, t)).toHaveAttribute("aria-selected", "true");
   }
+  const both = boardDeletes(page, 2);
   await page.keyboard.press("d");
   await page.keyboard.press("y");
   await page.keyboard.press("d");
   await page.keyboard.press("y");
   await expect(tile(page, title)).toHaveCount(0);
+  const [first, second] = await both;
+  expect(first.url).not.toBe(second.url); // two different boards
+  expect([first.status, second.status]).toEqual([204, 204]);
   await page.reload();
   await expect(page.getByTestId("mode")).toHaveText("-- DASHBOARD --");
   await expect(tile(page, title)).toHaveCount(0);
