@@ -36,8 +36,9 @@ frontend/src/{lib/{api,sync,keys,editor},routes,components}, frontend/{tests,e2e
 - Every board mutation goes through `apply_op`; never write cards/statuses from a route directly.
 - Every written card field updates `cards.field_meta` ({seq, client}); conflict and undo checks read it, never the event log.
 - API errors are `{error: {code, message}}` (raise `vwkanban.errors.ApiError`). Every state-changing `/api` request must send an `Origin` equal to `PUBLIC_URL`'s (`auth/origin.py`); the WS handshake reuses `origin_allowed`.
-- Every route/op touching a board uses the `require_member` dependency; the parametrized access-matrix test must cover new routes.
-- Keys live only in `frontend/src/lib/keys/keymap.ts` with help text; the help overlay and the uniqueness test read from it. `Esc`/`Ctrl+C` always go back exactly one level (board → dashboard included).
+- Every route/op touching a board uses `require_member` (or `require_owner`) from `boards/deps.py`: non-members get 404, editors get 403 on owner-only routes. The access-matrix test (`tests/api/test_boards.py::BOARD_ROUTES`) must list every `/boards/{board_id}*` route; a guard test reads the OpenAPI paths and fails on a missing one.
+- `position` columns use `COLLATE "C"`: fractional keys compare byte-wise, never by locale.
+- Keys live only in `frontend/src/lib/keys/keymap.ts` with help text; the help overlay and the uniqueness test read from it. `Esc`/`Ctrl+C` always go back exactly one level (board → dashboard included). Screens and overlays bind keys by pushing a mode with `pushMode()` (`lib/keys/dispatch.ts`, one capture-phase listener); never add another `keydown` listener for app keys.
 - Blocking work (argon2, CSV parsing of large files) runs in a thread pool, never on the event loop.
 - New op kinds need: schema, apply branch, client inverse (for undo), and a multi-client test.
 - Ids are client-generated UUIDv7; fractional positions and card numbers are assigned server-side only.

@@ -71,7 +71,8 @@ jobs:
       - run: docker compose up -d --build --wait --wait-timeout 180
       - run: curl -fsS http://vwk.test/api/healthz | tee /dev/stderr | grep -q '"status":"ok"'
       - run: curl -fsS http://vwk.test/ | grep -q '<div id="app">'
-      # Login is rate-limited to 5/min per IP: the curl login and the e2e use 3 of them.
+      # Login is rate-limited to 5/min per IP: the curl login and the e2e (login spec 2,
+      # dashboard spec 1) use 4 of them.
       - name: Log in over plain HTTP (cookie without Secure)
         run: |
           set -eu

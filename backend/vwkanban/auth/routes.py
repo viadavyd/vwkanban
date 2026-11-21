@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from vwkanban.auth.deps import AppSettings, CurrentUser, Db
@@ -80,11 +81,15 @@ async def login(
 
 
 @router.post("/signup")
-async def signup(
-    body: SignupBody, request: Request, response: Response, db: Db, settings: AppSettings
-) -> UserOut:
+async def signup(request: Request, response: Response, db: Db, settings: AppSettings) -> UserOut:
+    # The flag is checked before the body is parsed, so signup looks absent (404) for any
+    # request while it is off. A typed body param would be validated first (422).
     if not settings.allow_signup:
         raise ApiError(404, "not_found", "not found")
+    try:
+        body = SignupBody.model_validate_json(await request.body())
+    except ValidationError as e:
+        raise RequestValidationError(e.errors()) from None
     user = await create_user(db, body.username, body.password)
     if user is None:
         raise ApiError(409, "conflict", "username is taken")
@@ -93,9 +98,8 @@ async def signup(
 
 
 @router.post("/logout", status_code=204)
-async def logout(
-    user: CurrentUser, request: Request, response: Response, db: Db, settings: AppSettings
-) -> None:
+async def logout(request: Request, response: Response, db: Db, settings: AppSettings) -> None:
+    # No session required: an expired or unknown cookie is still cleared (idempotent).
     await delete_session(db, request.cookies.get(COOKIE_NAME))
     await db.commit()
     clear_session_cookie(response, settings)

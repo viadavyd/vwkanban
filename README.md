@@ -22,4 +22,10 @@ That admin is created on first start, when there are no users yet.
   rejected when the browser's `Origin` differs, and an `https://` URL makes the session
   cookie `Secure`.
 
+### Keys
+
+Everything works from the keyboard; press `?` on any screen for its keys. On the dashboard:
+`h j k l` move, `Enter` opens a board, `a` creates, `r` renames, `d` deletes (confirm with
+`y`), `Q` logs out. `Esc` / `Ctrl+C` always go back one level.
+
 Full deployment docs come with milestone M7.

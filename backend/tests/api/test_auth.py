@@ -66,9 +66,23 @@ async def test_wrong_password_and_unknown_user_look_the_same(client, engine):
     assert await session_count(engine) == 0
 
 
-async def test_logout_requires_session(client):
+async def test_logout_without_session_clears_cookie(client):
     r = await client.post("/api/auth/logout")
-    assert r.status_code == 401
+    assert r.status_code == 204
+    assert "max-age=0" in r.headers["set-cookie"].lower()
+
+
+async def test_logout_with_expired_session_clears_cookie(client, engine):
+    await add_user(engine, "alice", PW)
+    await login(client)
+    async with engine.begin() as conn:
+        await conn.execute(text("UPDATE sessions SET expires_at = now() - interval '1 second'"))
+    r = await client.post("/api/auth/logout")
+    assert r.status_code == 204
+    header = r.headers["set-cookie"].lower()
+    assert header.startswith(f"{COOKIE_NAME}=")
+    assert "max-age=0" in header
+    assert await session_count(engine) == 0
 
 
 async def test_unknown_cookie_is_401(client):
@@ -164,8 +178,21 @@ async def test_config_reports_signup_flag(make_client):
         assert (await c.get("/api/auth/config")).json() == {"signup_enabled": True}
 
 
-async def test_signup_404_when_disabled(client, engine):
-    r = await client.post("/api/auth/signup", json={"username": "carol", "password": PW})
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"username": "carol", "password": "s3cret-pass"}',
+        "{}",
+        '{"username": "x", "password": "s3cret-pass"}',
+        '{"username": "carol", "password": "short"}',
+        "not json",
+        "",
+    ],
+)
+async def test_signup_404_when_disabled(client, engine, content):
+    r = await client.post(
+        "/api/auth/signup", content=content, headers={"Content-Type": "application/json"}
+    )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "not_found"
     async with engine.connect() as conn:
@@ -197,11 +224,15 @@ async def test_signup_duplicate_is_409(make_client, engine):
         {"username": "x", "password": PW},
         {"username": "bad name", "password": PW},
         {"username": "carol"},
+        "not json",
     ],
 )
 async def test_signup_validation(make_client, body):
     async with make_client(allow_signup=True) as c:
-        r = await c.post("/api/auth/signup", json=body)
+        if isinstance(body, str):
+            r = await c.post("/api/auth/signup", content=body)
+        else:
+            r = await c.post("/api/auth/signup", json=body)
     assert r.status_code == 422
     err = r.json()["error"]
     assert err["code"] == "validation"
