@@ -1,0 +1,44 @@
+[project]
+name = "vwkanban"
+version = "0.1.0"
+description = "Keyboard-first real-time kanban (backend)"
+authors = [
+    { name = "David Vane", email = "351135478+viadavyd@users.noreply.github.com" }
+]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "alembic==1.20.1",
+    "asyncpg==0.32.0",
+    "fastapi==0.165.0",
+    "pydantic-settings==2.16.3",
+    "sqlalchemy[asyncio]==2.0.58",
+    "uvicorn==0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.5.0",
+    "ruff==0.17.6",
+]
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
