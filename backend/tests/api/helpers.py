@@ -4,6 +4,7 @@ from sqlalchemy import text
 
 from vwkanban.auth.passwords import hash_password
 from vwkanban.ids import uuid7
+from vwkanban.sync.fracindex import key_between
 
 
 async def add_user(engine, username: str, password: str) -> uuid.UUID:
@@ -51,6 +52,14 @@ async def add_member(engine, board_id: uuid.UUID, user_id: uuid.UUID, role: str)
         )
 
 
+def nth_key(n: int) -> str:
+    """The n-th of a run of increasing fractional keys (a0, a1, ...); valid for any n."""
+    key = None
+    for _ in range(n + 1):
+        key = key_between(key, None)
+    return key
+
+
 async def add_card(
     engine,
     board_id: uuid.UUID,
@@ -77,7 +86,7 @@ async def add_card(
                 "n": number,
                 "p": parent_id,
                 "s": status_id,
-                "pos": f"a{number}",
+                "pos": nth_key(number),
                 "t": f"card {number}",
                 "done": is_done,
                 "u": created_by,
