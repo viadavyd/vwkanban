@@ -12,9 +12,10 @@ export const column = (page: Page, name: string) => page.getByRole("region", { n
 export const card = (page: Page, title: string) =>
   page.locator("[data-card]").filter({ has: page.getByText(title, { exact: true }) });
 
-/** Titles of a column's cards, in order. */
-export async function titles(page: Page, name: string): Promise<string[]> {
-  return column(page, name).locator("[data-card] .title").allInnerTexts();
+/** Waits until a column shows exactly these card titles, in order. (A web-first assertion:
+ * after a reload the board renders asynchronously, so a one-shot read can see no cards.) */
+export async function expectTitles(page: Page, name: string, titles: string[]) {
+  await expect(column(page, name).locator("[data-card] .title")).toHaveText(titles);
 }
 
 export async function expectSelected(page: Page, title: string) {
