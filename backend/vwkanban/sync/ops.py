@@ -328,7 +328,7 @@ async def _create(ctx: _Ctx, op: CardCreate):
             description=data.description,
             is_done=data.is_done,
             tags=data.tags,
-            date=data.date,
+            due=data.date,
             field_meta={},
             created_by=ctx.member.user.id,
             **place,
@@ -376,7 +376,7 @@ async def _create_child(ctx: _Ctx, op: CardCreate):
         description=d.description,
         is_done=d.is_done,
         tags=d.tags,
-        date=d.date,
+        due=d.date,
         field_meta={},
         created_by=ctx.member.user.id,
     )
@@ -406,7 +406,7 @@ async def _update(ctx: _Ctx, op: CardUpdate):
     await ctx.undo_check(card.field_meta, list(fields), card_out(card))
     seq, _ = await ctx.next_seq()
     for name, value in fields.items():  # is_done: last write wins
-        setattr(card, name, value)
+        setattr(card, "due" if name == "date" else name, value)
     card.updated_at = func.now()
     ctx.stamp(card, list(fields), seq)
     await ctx.db.flush()
@@ -728,6 +728,7 @@ async def _import_rows(
             "is_done": r.is_done,
             "tags": r.tags,
             "date": r.date,
+            "due_time": r.time,
             "field_meta": meta,
             "created_by": member.user.id,
         }

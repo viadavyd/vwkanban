@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from pydantic import TypeAdapter, ValidationError
 
+from vwkanban.boards.due import FORMAT_HINT, parse_due
 from vwkanban.boards.models import CARD_DESCRIPTION_MAX, STATUS_NAME_MAX
 from vwkanban.csvio.format import HEADERS, unescape
 from vwkanban.sync.schemas import MAX_TAGS, CardTitle, Tag
@@ -21,7 +22,6 @@ MAX_ROWS = 5_000
 MAX_BYTES = 5 * 1024 * 1024
 _TRUE = {"true", "1", "yes"}
 _FALSE = {"false", "0", "no", ""}
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # A CSV id that can be kept as the card number (positive, canonical, fits an int4).
 _NUMBER = re.compile(r"[1-9]\d{0,8}")
 # How many row errors the message spells out (all are in `rows`).
@@ -38,6 +38,7 @@ class Row:
     title: str
     status: str  # "" = first column (top-level rows); ignored for children
     date: dt.date | None
+    time: dt.time | None  # only with a date
     is_done: bool
     tags: list[str]
     description: str
@@ -136,14 +137,12 @@ def _row(number: int, record: list[str], index: dict[str, int]) -> Row:
     if len(status) > STATUS_NAME_MAX:
         problems.append(f"status is longer than {STATUS_NAME_MAX} characters")
 
-    date = None
+    date, time = None, None
     if raw_date := cell("date").strip():
         try:
-            if not _DATE.fullmatch(raw_date):
-                raise ValueError
-            date = dt.date.fromisoformat(raw_date)
+            date, time = parse_due(raw_date)
         except ValueError:
-            problems.append(f"date {raw_date!r} is not YYYY-MM-DD")
+            problems.append(f"date {raw_date!r} is not {FORMAT_HINT}")
 
     flag = cell("is_done").strip().lower()
     if flag not in _TRUE | _FALSE:
@@ -175,6 +174,7 @@ def _row(number: int, record: list[str], index: dict[str, int]) -> Row:
         title=title,
         status=status,
         date=date,
+        time=time,
         is_done=flag in _TRUE,
         tags=tags,
         description=description,

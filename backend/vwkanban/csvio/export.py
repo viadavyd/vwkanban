@@ -8,6 +8,7 @@ import anyio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vwkanban.boards.due import format_due
 from vwkanban.boards.models import Card, Status
 from vwkanban.csvio.format import serialize
 
@@ -29,6 +30,7 @@ async def export_board(db: AsyncSession, board_id: uuid.UUID) -> bytes:
                 Card.parent_card_id,
                 Card.title,
                 Card.date,
+                Card.due_time,
                 Card.is_done,
                 Card.tags,
                 Card.description,
@@ -50,7 +52,7 @@ async def export_board(db: AsyncSession, board_id: uuid.UUID) -> bytes:
             "id": str(c.number),
             "title": c.title,
             "status": status,
-            "date": c.date.isoformat() if c.date else "",
+            "date": format_due(c.date, c.due_time) or "",
             "parent": parent,
             "is_done": "true" if c.is_done else "false",
             "tags": ";".join(c.tags),

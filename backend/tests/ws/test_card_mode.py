@@ -40,6 +40,19 @@ async def test_description_vs_title_both_apply(ab):
     assert (got["title"], got["description"]) == ("from B", "from A")
 
 
+async def test_due_time_reaches_the_other_client(ab):
+    """A due date with a time is one text field: B sees it, and a stale write conflicts."""
+    ws, alice, _, board, (todo, *_), a, b = ab
+    card = (await ok(a, "card.create", new_card(todo, "due")))["data"]["card"]
+    base = 1
+    ea = await ok(a, "card.update", fields(card, date="2026-11-30 14:30"), base_seq=base)
+    assert (await b.event_for(ea["op_id"]))["data"]["card"]["date"] == "2026-11-30 14:30"
+    rej = await rejected(b, "card.update", fields(card, date="2026-12-01 09:00"), base_seq=base)
+    assert rej["code"] == "conflict" and rej["current"]["date"] == "2026-11-30 14:30"
+    state = await converged(ws, alice, board, a, b)
+    assert card_in(state, card)["date"] == "2026-11-30 14:30"
+
+
 async def test_both_edit_the_description(ab):
     """Row 4: first save wins; the second gets `conflict` with the current card (the
     client keeps its draft), and `:w!` (base = current seq) then wins."""

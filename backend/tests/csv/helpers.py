@@ -18,7 +18,8 @@ async def new_board(c, title="CSV board") -> tuple[str, dict[str, str]]:
 
 async def fixture_board(c) -> str:
     """Seed columns plus a custom one at the right; children; unicode tags; a tricky
-    description; dates set and empty; formula-like text; a gap in the card numbers."""
+    description; dates set (with and without a time) and empty; formula-like text; a gap
+    in the card numbers."""
     board, st = await new_board(c, "Fixture ✓")
     blocked = str(uuid7())
     r = await send(
@@ -51,7 +52,7 @@ async def fixture_board(c) -> str:
     assert (await send(c, board, "card.delete", {"id": gone["id"]})).status_code == 200
     await card(st["Todo"], "+1 for pizza", is_done=True, tags=["food"])
     await card(st["Doing"], "'quoted' start", description="\tindented with a tab")
-    await card(st["Blocked"], 'Waiting on API, "keys"', date="2027-01-31")
+    await card(st["Blocked"], 'Waiting on API, "keys"', date="2027-01-31 09:30")
     await create(c, board, st["Done"], "Done thing")
     return board
 

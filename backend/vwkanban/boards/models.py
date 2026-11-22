@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -23,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from vwkanban.boards.due import format_due, parse_due
 from vwkanban.db import Base
 from vwkanban.ids import uuid7
 
@@ -110,6 +112,7 @@ class Card(Base):
         CheckConstraint(
             f"char_length(description) <= {CARD_DESCRIPTION_MAX}", name="cards_description_len"
         ),
+        CheckConstraint("due_time IS NULL OR date IS NOT NULL", name="cards_due_time_needs_date"),
         Index(
             "ix_cards_column",
             "board_id",
@@ -140,6 +143,7 @@ class Card(Base):
     is_done: Mapped[bool] = mapped_column(Boolean, server_default="false")
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     date: Mapped[dt.date | None] = mapped_column(Date)  # due date
+    due_time: Mapped[dt.time | None] = mapped_column(Time)  # optional, wall clock (no tz)
     # Per field: {"title": {"seq": 41, "client": "<uuid>"}, ...}; read by conflict/undo checks.
     field_meta: Mapped[dict] = mapped_column(JSONB, server_default="{}")
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
@@ -150,3 +154,12 @@ class Card(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def due(self) -> str | None:
+        """`date` + `due_time` as `YYYY-MM-DD[ HH:MM]` (see `boards/due.py`)."""
+        return format_due(self.date, self.due_time)
+
+    @due.setter
+    def due(self, text: str | None) -> None:
+        self.date, self.due_time = parse_due(text) if text else (None, None)
