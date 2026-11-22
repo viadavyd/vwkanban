@@ -166,8 +166,16 @@ test("tags and due date: saved, shown on the tile; a bad date stays a draft", as
   await page.keyboard.press("Escape");
   await expect(row(page, "date").getByTestId("choice")).toHaveCount(0);
 
+  // An optional time on the due date: `YYYY-MM-DD HH:MM`.
+  await page.keyboard.press("a");
+  await page.keyboard.type(" 14:30");
+  await page.keyboard.press("Enter");
+  await settled(page);
+  expect((await serverCard(page.request, board.id, id)).date).toBe("2026-12-24 14:30");
+  await expect(row(page, "date")).toContainText("2026-12-24 14:30");
+
   await page.keyboard.press("Escape");
-  await expect(card(page, "fields").getByTestId("card-meta")).toHaveText(/due 12-24/);
+  await expect(card(page, "fields").getByTestId("card-meta")).toHaveText(/due 12-24 14:30/);
   await expect(card(page, "fields").locator(".tag")).toHaveText(["ui", "bug"]);
 });
 

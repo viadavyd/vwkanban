@@ -27,6 +27,20 @@ describe("field parsers", () => {
     }
   });
 
+  it("dates take an optional HH:MM time, normalised to a space separator", () => {
+    expect(parse("date", "2026-11-30 14:30")).toEqual({
+      ok: true,
+      fields: { date: "2026-11-30 14:30" },
+    });
+    expect(parse("date", "2026-11-30T09:05")).toEqual({
+      ok: true,
+      fields: { date: "2026-11-30 09:05" },
+    });
+    for (const bad of ["2026-11-30 24:00", "2026-11-30 12:60", "2026-11-30 9:05", "2026-11-30T"]) {
+      expect(parse("date", bad)).toMatchObject({ ok: false });
+    }
+  });
+
   it("descriptions keep their text as is", () => {
     expect(parse("description", " a\n\nb ")).toEqual({
       ok: true,
