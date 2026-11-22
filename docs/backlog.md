@@ -33,4 +33,4 @@ Bugs go under Bugs. `/feature` and `/fix` read and update this file.
 
 ## Done
 - MVP M0–M7 (PRs #1–#11), 2026-11-22
-- Due date with an optional time (`YYYY-MM-DD HH:MM`), 2026-11-22
+- Due date with an optional time (`YYYY-MM-DD HH:MM`) (PR #13), 2026-11-22
