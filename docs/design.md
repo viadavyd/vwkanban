@@ -17,7 +17,7 @@ line to §11.
 | Ordering | Fractional-index string keys, computed only by the server from `after_id`/`before_id` |
 | Children | Depth 1. Shown inside the parent's card view; the tile shows `n/m` |
 | Tags | `text[]` on the card; colour = hash(name) → 8-colour palette |
-| `date` | User-edited due date (`created_at`/`updated_at` are separate) |
+| `date` | User-edited due date with an optional wall-clock time, `YYYY-MM-DD[ HH:MM]`, no timezone (`created_at`/`updated_at` are separate) |
 | Statuses | `statuses` table per board; new boards get Todo / Doing / Done |
 | Members | `board_members` with roles `owner`, `editor` |
 | Users | First admin from `.env`; `vwk user` CLI; `ALLOW_SIGNUP` flag (off by default) |
@@ -61,7 +61,8 @@ need no id remap.
   palette is red, yellow, blue, green, purple, orange, pink, gray
 - `cards(id, board_id, number UNIQUE per board, parent_card_id, status_id RESTRICT, position,
   title 1..300, description ≤20 000, is_done, tags text[] (each 1..30, no ';', ≤50, distinct),
-  date, field_meta, created_by, created_at, updated_at, deleted_at)`. CHECK: a child has no
+  date, due_time, field_meta, created_by, created_at, updated_at, deleted_at)`. `date` +
+  `due_time` are one field on the wire (`date`, see `boards/due.py`); `due_time` needs a date. CHECK: a child has no
   status, and a top-level card has one. Depth 1 is enforced in `apply_op`
 - `board_events(board_id, seq, op_id UNIQUE, client_id, actor_id, kind, payload, created_at)`:
   the op log for replay and idempotency. It keeps the last 10 000 events per board,
@@ -72,7 +73,7 @@ need no id remap.
 - Soft delete: `deleted_at`. Children cascade
 - **Status delete rule:** refused while the column has live cards. Its soft-deleted cards
   are purged in the same transaction, and undoing their deletion then gets `gone`
-- **CSV mapping:** `id`→`number`, `title`, `status`→status name, `date` YYYY-MM-DD,
+- **CSV mapping:** `id`→`number`, `title`, `status`→status name, `date` YYYY-MM-DD[ HH:MM],
   `parent`→parent's number, `is_done`, `tags` joined with `;`, `description`
 
 ## §3 API
@@ -205,7 +206,7 @@ by bob".
   no columns gets `Todo`. Children ignore status.
 - **Field formats:**
   - `is_done`: `true false 1 0 yes no`
-  - `date`: `YYYY-MM-DD` or empty
+  - `date`: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM` (a `T` separator is accepted) or empty
   - `tags`: split on `;`, trimmed, deduped
   - encoding: UTF-8, BOM tolerated
 - **All or nothing:** one bad row rolls back the whole import. Errors list row numbers,
@@ -364,3 +365,6 @@ See `docs/backlog.md`.
   - perf keypress test uses `j k h l Space`, since `a` now opens card mode
 - MVP (M0–M7) completed 2026-11-22. The full original plan is in `.local/plan.md`
   (local only, history).
+- **2026-11-22, due time:**
+  - the due date takes an optional `HH:MM` time in the same field (one conflict unit),
+    stored in an additive `cards.due_time` column; wall clock, no timezone, like the date

@@ -17,7 +17,7 @@ export const DESCRIPTION_MAX = 20_000;
 export const TAG_MAX = 30;
 export const TAGS_MAX = 50;
 
-/** Title and tags are single-line fields (`Enter` in INSERT saves and leaves). */
+/** Title, tags and due date are single-line fields (`Enter` in INSERT saves and leaves). */
 export const SINGLE_LINE: ReadonlySet<TextField> = new Set(["title", "tags", "date"]);
 
 /** A field's value as the editor shows it. */
@@ -36,10 +36,16 @@ export function textOf(card: Card, field: TextField): string {
 
 export type Parsed = { ok: true; fields: CardFields } | { ok: false; error: string };
 
-function validDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const d = new Date(`${s}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+/** A due date with an optional wall-clock time: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM` (a `T`
+ * separator is accepted). Returns the normalised text, or null if invalid. */
+export function parseDue(s: string): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2}))?$/.exec(s);
+  if (!m) return null;
+  const d = new Date(`${m[1]}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== m[1]) return null;
+  if (m[2] === undefined) return m[1];
+  if (Number(m[2]) > 23 || Number(m[3]) > 59) return null;
+  return `${m[1]} ${m[2]}:${m[3]}`;
 }
 
 /** Tags are separated by spaces or commas; duplicates are dropped, order is kept. */
@@ -70,9 +76,11 @@ export function parse(field: TextField, text: string): Parsed {
       return typeof tags === "string" ? { ok: false, error: tags } : { ok: true, fields: { tags } };
     }
     case "date": {
-      const date = text.trim();
-      if (!date) return { ok: true, fields: { date: null } };
-      if (!validDate(date)) return { ok: false, error: "the due date is YYYY-MM-DD (or empty)" };
+      const raw = text.trim();
+      if (!raw) return { ok: true, fields: { date: null } };
+      const date = parseDue(raw);
+      if (date === null)
+        return { ok: false, error: "the due date is YYYY-MM-DD or YYYY-MM-DD HH:MM (or empty)" };
       return { ok: true, fields: { date } };
     }
   }

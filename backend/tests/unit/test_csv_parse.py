@@ -20,7 +20,7 @@ def invalid(raw: bytes) -> ImportInvalid:
 def test_full_row():
     (r,) = parse(csv_bytes('7,Hello,Doing,2026-12-01,,true,a; b ;;a,"multi\r\nline"')).rows
     assert (r.row, r.key, r.title, r.status) == (2, "7", "Hello", "Doing")
-    assert r.date == dt.date(2026, 12, 1)
+    assert r.date == dt.date(2026, 12, 1) and r.time is None
     assert r.is_done is True
     assert r.tags == ["a", "b"]  # trimmed, empties dropped, duplicates removed
     assert r.description == "multi\r\nline"
@@ -50,10 +50,28 @@ def test_is_done_spellings(value, done):
     assert parse(csv_bytes(f"1,x,,,,{value},,")).rows[0].is_done is done
 
 
-@pytest.mark.parametrize("value", ["2026-13-01", "2026-02-30", "01/12/2026", "2026-1-1", "x"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-13-01",
+        "2026-02-30",
+        "01/12/2026",
+        "2026-1-1",
+        "x",
+        "2026-12-01 25:00",
+        "2026-12-01 9:30",
+    ],
+)
 def test_bad_dates(value):
     e = invalid(csv_bytes(f"1,x,,{value},,,,"))
-    assert e.rows == [{"row": 2, "message": f"date {value!r} is not YYYY-MM-DD"}]
+    msg = f"date {value!r} is not YYYY-MM-DD or YYYY-MM-DD HH:MM"
+    assert e.rows == [{"row": 2, "message": msg}]
+
+
+@pytest.mark.parametrize("value", ["2026-12-01 14:30", "2026-12-01T14:30"])
+def test_date_with_time(value):
+    (r,) = parse(csv_bytes(f"1,x,,{value},,,,")).rows
+    assert (r.date, r.time) == (dt.date(2026, 12, 1), dt.time(14, 30))
 
 
 def test_escapes_are_stripped():

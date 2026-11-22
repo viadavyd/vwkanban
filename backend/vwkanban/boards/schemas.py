@@ -2,7 +2,7 @@ import datetime as dt
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from vwkanban.boards.models import BOARD_TITLE_MAX
 
@@ -63,7 +63,8 @@ class CardOut(BaseModel):
     description: str
     is_done: bool
     tags: list[str]
-    date: dt.date | None
+    # `YYYY-MM-DD[ HH:MM]`: read from Card.due (date + due_time).
+    date: str | None = Field(validation_alias="due")
     field_meta: dict
     created_at: dt.datetime
     updated_at: dt.datetime

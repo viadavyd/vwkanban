@@ -40,7 +40,7 @@ export interface Card {
   description: string;
   is_done: boolean;
   tags: string[];
-  /** Due date, YYYY-MM-DD. */
+  /** Due date, `YYYY-MM-DD` or `YYYY-MM-DD HH:MM` (wall clock, no timezone). */
   date: string | null;
   field_meta: Record<string, FieldStamp>;
   created_at: string;

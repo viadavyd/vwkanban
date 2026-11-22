@@ -16,7 +16,7 @@ async def test_export_order_children_and_escape(c):
             "5,'+1 for pizza,Todo,,,true,food,\r\n"
             "6,''quoted' start,Doing,,,false,,'\tindented with a tab\r\n"
             "8,Done thing,Done,,,false,,\r\n"
-            '7,"Waiting on API, ""keys""",Blocked,2027-01-31,,false,,\r\n'
+            '7,"Waiting on API, ""keys""",Blocked,2027-01-31 09:30,,false,,\r\n'
         ).encode()
     )
 

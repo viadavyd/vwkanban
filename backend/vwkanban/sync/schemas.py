@@ -6,12 +6,19 @@ M5: text-field updates (with the base_seq conflict check) and child create (`par
 Child reorder is deferred after the MVP.
 """
 
-import datetime as dt
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
+from vwkanban.boards.due import normalize_due
 from vwkanban.boards.models import CARD_DESCRIPTION_MAX, CARD_TITLE_MAX, COLORS, STATUS_NAME_MAX
 
 CardTitle = Annotated[
@@ -25,6 +32,8 @@ Tag = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=30, pattern=r"^[^;]*$"),
 ]
+# A due date with an optional time: `YYYY-MM-DD[ HH:MM]`, normalised (boards/due.py).
+Due = Annotated[str, AfterValidator(normalize_due)]
 
 
 class _Strict(BaseModel):
@@ -40,7 +49,7 @@ class ChildData(_Strict):
     title: CardTitle
     description: str = Field(default="", max_length=CARD_DESCRIPTION_MAX)
     tags: list[Tag] = []
-    date: dt.date | None = None
+    date: Due | None = None
     is_done: bool = False
 
 
@@ -78,7 +87,7 @@ class CardFields(_Strict):
     title: CardTitle | None = None
     description: str | None = Field(default=None, max_length=CARD_DESCRIPTION_MAX)
     tags: list[Tag] | None = Field(default=None, max_length=MAX_TAGS)
-    date: dt.date | None = None
+    date: Due | None = None
     is_done: bool | None = None
 
     @model_validator(mode="after")

@@ -314,6 +314,25 @@ async def test_text_fields_are_written_and_stamped(setup):
     assert (await loaded(c, board))[card["id"]]["description"] == 'line 1\nline 2, "quoted"'
 
 
+async def test_due_date_takes_an_optional_time(setup):
+    """The due date is `YYYY-MM-DD[ HH:MM]` (wall clock); a `T` separator is normalised."""
+    c, board, (todo, *_), _ = setup
+    card = await create(c, board, todo, "due")
+    out = (await update(c, board, card, date="2026-11-30T14:30")).json()["event"]["data"]["card"]
+    assert out["date"] == "2026-11-30 14:30"
+    assert (await loaded(c, board))[card["id"]]["date"] == "2026-11-30 14:30"
+    # A date without a time drops the time; null clears both.
+    out = (await update(c, board, card, date="2026-12-01")).json()["event"]["data"]["card"]
+    assert out["date"] == "2026-12-01"
+    await update(c, board, card, date="2026-12-02 08:00")
+    assert (await update(c, board, card, date=None)).json()["event"]["data"]["card"]["date"] is None
+    for bad in ("2026-11-30 24:00", "2026-11-30 9:00", "2026-11-30 12:00:00", "noon"):
+        assert (await update(c, board, card, date=bad)).status_code == 422, bad
+    new = {"id": str(uuid7()), "status_id": todo, "title": "t", "date": "2027-01-01 07:05"}
+    r = await send(c, board, "card.create", new)
+    assert r.json()["event"]["data"]["card"]["date"] == "2027-01-01 07:05"
+
+
 async def test_text_conflict_against_base_seq(setup):
     """Plan §3.2: `conflict` if field_meta[f].seq > base_seq and another client wrote it;
     the reject carries the card's current state and consumes no seq."""
