@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   EX_COMMANDS,
+  HELP_SECTIONS,
+  helpKey,
+  helpRows,
   KEYMAP,
   keyName,
   lookup,
   MODE_LABEL,
   PREFIX,
-  SUBMODES,
+  type HelpScreen,
   type Mode,
 } from "../src/lib/keys/keymap";
 
@@ -88,7 +91,7 @@ describe("keymap", () => {
   it("binds the column commands under the s prefix", () => {
     expect(lookup("board", "s")).toBe("columnPrefix");
     expect(PREFIX.column).toBe("s");
-    expect(SUBMODES.board).toEqual(["column", "members"]);
+    expect(HELP_SECTIONS.board).toContain("column");
     const keys = KEYMAP.filter((b) => b.mode === "column").flatMap((b) => b.keys);
     expect(keys.sort()).toEqual(["C-c", "Esc", "a", "c", "d", "r"].sort());
   });
@@ -107,7 +110,7 @@ describe("keymap", () => {
     );
     const field = KEYMAP.filter((b) => b.mode === "field").flatMap((b) => b.keys);
     expect(field.sort()).toEqual(["C-c", "Esc"]);
-    expect(SUBMODES.card).toEqual(["field"]);
+    expect(HELP_SECTIONS.card).toContain("field");
   });
 
   it("documents the ex commands (:w, :e) with and without !", () => {
@@ -117,6 +120,45 @@ describe("keymap", () => {
       expect(c.help.trim()).not.toBe("");
       expect(c.bangHelp.trim()).not.toBe("");
     }
+  });
+
+  it("shows every binding and ex command in some screen's help (M7)", () => {
+    const shown = new Set<string>();
+    for (const screen of Object.keys(HELP_SECTIONS) as HelpScreen[])
+      for (const m of HELP_SECTIONS[screen])
+        for (const row of helpRows(m)) for (const k of row.keys) shown.add(`${m} ${k}`);
+    const missing = [
+      ...KEYMAP.flatMap((b) => b.keys.map((k) => `${b.mode} ${helpKey(b.mode, k)}`)),
+      ...EX_COMMANDS.flatMap((c) => [`field :${c.short}`, `field :${c.short}!`]),
+    ].filter((id) => !shown.has(id));
+    expect(missing).toEqual([]);
+    const sections = Object.values(HELP_SECTIONS).flat();
+    for (const m of modes) expect(sections, m).toContain(m);
+  });
+
+  it("starts each screen's help with the screen and ends it with help's own keys", () => {
+    for (const [screen, sections] of Object.entries(HELP_SECTIONS)) {
+      expect(sections[0]).toBe(screen);
+      expect(sections.at(-1)).toBe("help");
+      expect(new Set(sections).size, screen).toBe(sections.length);
+    }
+    // The overlays each screen can open (Prompt.svelte, Confirm.svelte).
+    for (const screen of ["dashboard", "board"] as const)
+      expect(HELP_SECTIONS[screen]).toEqual(expect.arrayContaining(["prompt", "confirm"]));
+  });
+
+  it("formats help keys: prefixes, Ctrl and ex commands", () => {
+    expect(helpKey("column", "a")).toBe("s a");
+    expect(helpKey("column", "Esc")).toBe("Esc");
+    expect(helpKey("board", "C-c")).toBe("Ctrl+C");
+    expect(helpRows("field").flatMap((r) => r.keys)).toEqual([
+      "Esc",
+      "Ctrl+C",
+      ":w",
+      ":w!",
+      ":e",
+      ":e!",
+    ]);
   });
 
   it("names keys", () => {

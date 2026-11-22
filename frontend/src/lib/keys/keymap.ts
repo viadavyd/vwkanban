@@ -203,11 +203,44 @@ export const EX_COMMANDS: readonly ExCommand[] = [
 /** Key typed before a mode's keys (shown in help as "s a"). */
 export const PREFIX: Partial<Record<Mode, string>> = { column: "s" };
 
-/** Modes whose help is shown along with a screen's own (the screen's prefixes). */
-export const SUBMODES: Partial<Record<Mode, Mode[]>> = {
-  board: ["column", "members"],
-  card: ["field"],
+/** Screens with a help overlay (`?`). */
+export type HelpScreen = "dashboard" | "board" | "card";
+
+/** The sections each screen's help shows: the screen itself, then every mode it can push
+ * (its prefix, overlays, prompts and confirms), then help's own keys. Between them the
+ * screens show every binding in KEYMAP (tests/keymap.test.ts checks it). */
+export const HELP_SECTIONS: Record<HelpScreen, readonly Mode[]> = {
+  dashboard: ["dashboard", "prompt", "confirm", "help"],
+  board: ["board", "column", "members", "prompt", "confirm", "help"],
+  card: ["card", "field", "help"],
 };
+
+/** One help row: the keys as shown ("s a", "Ctrl+C", ":w!") and what they do. */
+export interface HelpRow {
+  keys: string[];
+  help: string;
+}
+
+/** How a key reads in help: a prefix mode's keys as "s a" (its Esc / Ctrl+C as is). */
+export function helpKey(mode: Mode, key: string): string {
+  const prefix = PREFIX[mode];
+  return prefix && key !== "Esc" && key !== "C-c" ? `${prefix} ${key}` : displayKey(key);
+}
+
+/** The rows of one help section; the field section adds the ex commands. */
+export function helpRows(mode: Mode): HelpRow[] {
+  const rows = bindingsFor(mode).map((b) => ({
+    keys: b.keys.map((k) => helpKey(mode, k)),
+    help: b.help,
+  }));
+  if (mode === "field")
+    for (const c of EX_COMMANDS)
+      rows.push(
+        { keys: [`:${c.short}`], help: c.help },
+        { keys: [`:${c.short}!`], help: c.bangHelp },
+      );
+  return rows;
+}
 
 /** Modes whose keys also work while focus is in a text input (the input is the prompt). */
 export const INPUT_MODES: ReadonlySet<Mode> = new Set(["prompt"]);
